@@ -306,6 +306,42 @@ Phase 1 데모기간 (영업일 ~7일): Bronze ~1 GB, Silver ~0.5 GB, Gold ~1.5 
 
 **100x = 1억 trades/일** (CLAUDE.md "100만→1억" framework 와 정확히 align). Phase 1 baseline 1M/일이 100x base가 됨 → 발표 narrative 깔끔.
 
+### 3.7 부하 capacity 검증 — 컴포넌트별 활용률 (Phase 1 vs 100x)
+
+#### Phase 1 평균/피크 분해 (3 종목 실측 추정)
+
+| 종목 | 일평균 trades | 영업시간 6.5h 평균 | 1초 평균 | 1초 피크 (장 시작 등) |
+|---|---|---|---|---|
+| 삼성전자 (005930) | ~60만 | | ~26/sec | ~150/sec |
+| SK하이닉스 (000660) | ~30만 | | ~13/sec | ~80/sec |
+| NAVER (035420) | ~10만 | | ~4/sec | ~30/sec |
+| **3 종목 합계** | ~100만 | | **~43/sec** | **~250–300/sec** |
+
+#### 컴포넌트별 capacity vs 부하
+
+| 컴포넌트 | 이론 한계 | Phase 1 부하 (피크) | Phase 1 활용률 | 100x 부하 (피크 ~30K/sec) | 100x 한계 도달? |
+|---|---|---|---|---|---|
+| KIS Producer (Python aiohttp + aiokafka) | ~5,000 msgs/sec | 300/sec | **6%** | 30,000/sec | 도달 → 종목별 producer 분할 또는 멀티 process |
+| Kafka 단일 broker (KRaft) | ~50,000 msgs/sec | 300/sec | **0.6%** | 30,000/sec | 한계 60% → MSK + RF=3 |
+| Kafka 활용 partition (key=symbol → 3개만 활용) | ~10,000 msgs/sec/partition | 100/sec/partition | **1%** | 15K/sec/partition (삼성전자 hot) | **partition 한계 초과 → composite key (`symbol \|\| minute_bucket`) 또는 super-active 종목 별도 토픽** |
+| Spark Streaming (1분 trigger, 단일 worker) | ~50,000 msgs/min sink | 평균 2,700 / 피크 18,000 msgs/min | **5–36%** | 1.8M msgs/min | 36x 초과 → EMR Serverless executor scaling |
+| Bronze→Silver batch (5분 MERGE INTO) | ~수만 rows/min | 평균 13.5K / 피크 90K rows/5min | **15–30%** | 9M rows/5min | 단일 worker 못 끝냄 → 종목별 partition 병렬 + EMR Serverless |
+| Silver→Gold batch (5분 hour OVERWRITE) | ~수만 rows/min | hour 당 ~3,510 rows | **<1%** | hour 당 350K rows | 여전히 여유 (Gold KPI grain 자체가 작음) |
+
+#### 핵심 결론
+
+- **Phase 1 = 모든 컴포넌트에서 압도적 여유** (한 자릿수 ~ 30% 활용). Single-process Python으로도 처리 가능한 부하 수준
+- **첫 한계 도달 컴포넌트 = Kafka partition (key=symbol hot)** — 100x 시 삼성전자 단독 partition 부담이 limiting factor
+- **두 번째 한계 = Spark Streaming 단일 worker** — 100x 시 36x 초과 → EMR Serverless 필수
+- **Storage 비용은 한참 후순위 — 진짜 깨지는 곳은 컴퓨트 + Kafka partition 분산** (§8.3 dimension 분석과 일치)
+
+#### "왜 Streaming?" 평가 답변 narrative
+
+Phase 1 부하 자체가 stream 정당화에 약하므로 (45/sec 평균은 Python single-thread도 처리 가능) 발표 narrative 는:
+1. **Phase 1 = 100x baseline 학습 환경**. 한계 도달 시점·방향이 명확한 진화 출발점
+2. **Peak burst (~300/sec) 흡수** — Kafka buffer + Spark amortization 으로 burst 안정 처리. single-process 면 burst 손실 가능
+3. **이미 검증된 패턴** — 100x 도래 시 새 architecture 도입 risk 보다 시작부터 streaming 정착이 운영 비용 ↓
+
 ---
 
 ## 4. Pipeline & Orchestration
@@ -715,15 +751,21 @@ T-10min  발표 슬라이드 + 녹화 영상 + browser tab 정리
 
 ```
 Phase 1 (1x  =  100만/일):  로컬 Docker · 3 종목 (삼성전자/SK하이닉스/NAVER)
+                            Iceberg partition: (days, hour) 시간만
        ↓
 Phase 2 (10x = 1천만/일):   KOSPI 시총 상위 30 · MSK · Spark Streaming local 유지
+                            Iceberg partition: (days, hour) 유지 (column stats 로 종목 prune 충분)
        ↓
 Phase 3 (50x = 5천만/일):   KOSPI200 · EMR Serverless streaming · Iceberg branch 활용
+                            Iceberg partition: (bucket(8, symbol), days, hour) — hot 종목 hash 분산
        ↓
 Phase 4 (100x = 1억/일):    전 종목 (KOSPI + KOSDAQ) · 멀티 region · MSK + EMR Serverless · QuickSight Enterprise
+                            Iceberg partition: (bucket(32, symbol), days, hour) — 2,500 종목 분산
 ```
 
 CLAUDE.md "100만 → 1억" framework 와 정확히 align. 각 단계에서 **어디가 먼저 깨지는지** 명확 → 단계적 진화 narrative.
+
+**Storage partition 진화 원칙**: 종목 직접 partition (`PARTITIONED BY (symbol, ...)`) 은 종목 수 200+ 에서 file 폭주 → 한산 종목 partition 이 KB 수준. **`bucket(N, symbol)` hash transform** 이 정답 — bucket 수가 일정하므로 file 수 안정, Iceberg hidden partitioning 으로 query 시 자동 활용. SQL 작성에는 차이 없음 (`WHERE symbol = '005930'` 그대로).
 
 ### 8.6 5/16 최종 발표 구조 (10–12분)
 
