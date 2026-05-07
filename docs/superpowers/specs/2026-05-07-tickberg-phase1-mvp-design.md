@@ -66,7 +66,7 @@
 | 4 | Spark Batch — Silver→Gold | hour partition OVERWRITE | PySpark + Iceberg | Airflow `SparkSubmitOperator` |
 | 5 | Spark Batch — Compaction · dim_symbol | RewriteDataFiles + 종목마스터 일배치 | PySpark + Iceberg Action | Airflow `SparkSubmitOperator` |
 | 6 | Airflow | DAG 5개 통괄 | LocalExecutor + PostgreSQL | docker-compose |
-| 7 | Kafka (KRaft) | 메시지 큐 (단일 broker, RF=1) | OSS | docker-compose |
+| 7 | Kafka (KRaft) | 메시지 큐 (단일 broker, RF=1). Topic·partition 설계는 §2.4 참조 | OSS | docker-compose |
 | 8 | Prometheus + Grafana | 1차 메트릭 2 패널 | Kafka JMX exporter, Spark Prometheus servlet | docker-compose |
 
 **AWS 리소스** (`ap-northeast-2`):
@@ -111,6 +111,56 @@ KIS WS ──▶ KIS Producer ──▶ Kafka `kis.tick.raw`
 - 영업시간 vs 장 마감 후 워크로드 비대칭: streaming idle 시간(매일 18시간)에 batch가 자원 흡수
 - FairScheduler pool 분리 (`streaming_pool` 우선↑, `batch_pool` 양보 가능) 로 자원 충돌 완화
 - 100x 진화 경로: EMR Serverless 시 streaming application + batch application 분리
+
+### 2.4 Kafka Topic & Partition 설계
+
+#### Topic 구조 — 이벤트 종류별 분리 (Phase 1 = 1 토픽, Phase 2부터 분리)
+
+| Topic 이름 | Phase | 들어오는 이벤트 | 용도 |
+|---|---|---|---|
+| `kis.tick.raw` | **Phase 1 (현재)** | KIS H0STCNT0 실시간 체결가 | Bronze streaming source |
+| `kis.quote.raw` | Phase 2 | KIS H0STASP0 실시간 호가 (bid/ask 10단계) | 호가 분석 별도 lakehouse 갈래 |
+| `dart.disclosure.raw` | Phase 2 | DART 공시 이벤트 push (또는 polling 결과) | DART batch + alerting |
+
+**왜 이벤트 종류별 분리 (vs 단일 토픽 `kis.raw` 에 모든 이벤트)**:
+- ① **schema 안정성** — H0STCNT0 (체결) 와 H0STASP0 (호가) 은 schema가 다름. 한 토픽 안에 섞이면 consumer가 매번 type-discriminator 분기 필요. schema evolution 시 영향 범위 broad
+- ② **consumer scaling 독립** — 체결과 호가는 traffic 양·처리 비용이 다름. 별 토픽이면 consumer parallelism·partitions를 각자 튜닝 가능
+- ③ **retention 정책 독립** — 체결은 7일, 호가는 1일 (양 많고 가치는 즉시) 같은 차등화 가능
+- ④ **Phase 분리와 align** — Phase 1 = `kis.tick.raw` 만, Phase 2에 `kis.quote.raw` 추가 = 토픽 단위로 evolution 명확
+
+**왜 종목별 분리 (`kis.tick.raw.005930`, ..) 하지 않았나**:
+- 종목 추가/삭제마다 토픽 생성/삭제 운영 부담
+- Spark Streaming consumer가 토픽 수만큼 늘어남 (3 → 200 → ... 무한)
+- 종목별 retention/scale 차등화 필요 거의 없음 — schema 동일, 처리도 동일
+- → 종목 차원은 **partition** 으로 분리, 토픽은 **이벤트 종류** 로만 분리
+
+#### Partition 설계 — `kis.tick.raw` 기준
+
+| 항목 | 값 | 결정 이유 |
+|---|---|---|
+| **partitions** | **12** | Phase 1 3 종목 + Phase 2 30 종목 모두 cover. Kafka는 partition 늘리기는 가능하지만 줄이기 어려움 → 미래 여유 우선. 12 = 3 (Phase 1) + 9 buffer |
+| **partition key** | **`symbol` (종목코드)** | 같은 종목 메시지 = 같은 partition (Kafka FIFO ordering 보장) |
+| **replication factor** | **1** (Phase 1) | dev 환경. 운영 전환 시 RF=3 (아래 6.2 참조) |
+| **min.insync.replicas** | 1 (Phase 1) | RF=1과 일관 |
+| **retention** | 7일 (default) | Bronze로 적재되므로 Kafka는 buffer 역할만. 디버깅 시 1주일치 replay 가능 |
+
+**partition key = `symbol` 선택 trade-off**:
+
+| 옵션 | 장점 | 단점 |
+|---|---|---|
+| **`symbol`** ⭐ | 종목별 ordering 보장 → cum_volume monotonic 검증 가능. 디버깅 시 한 종목 흐름이 한 partition 안에 모임 (관찰 쉬움) | hot partition 가능성 (삼성전자가 NAVER 보다 5–10x 활발) |
+| `null` (round-robin) | partition 균등 사용 | 종목 ordering 깨짐 → cum_volume monotonic 검증 어려움 |
+| `hash(symbol \|\| ts_minute)` | 분산 + 분 단위 그룹핑 | 종목 내 ordering 부분만 보존, 디버깅 어려움 |
+
+**왜 `symbol` 채택**:
+- 우리 trade_uid 합성 키 = (symbol, trade_ts_kst, cum_volume) → cum_volume monotonic 가정. 종목 내 ordering 보장이 데이터 정합성 검증의 기반
+- Phase 1 3 종목에서 hot partition 부담 무시 가능 (pico-scale)
+- 100x 시 hot partition 깨지면 → key를 `(symbol, ts_minute_bucket)` 으로 진화. 이때 ordering 손실은 1분 윈도우 내에서만 → 여전히 dedup 가능
+
+**100x 시 partition 설계 진화**:
+- partitions 12 → 60–120 (종목 수 비례 + 처리량 비례)
+- partition key = composite (symbol + minute bucket) 도입 검토
+- replication factor 1 → 3, MSK Serverless 채택
 
 ---
 
@@ -167,7 +217,7 @@ PARTITIONED BY (days(trade_ts_kst), hour(trade_ts_kst))
 TBLPROPERTIES (
   'format-version'='2',
   'write.distribution-mode'='hash',
-  'write.target-file-size-bytes'='134217728'
+  'write.target-file-size-bytes'='268435456'    -- 256 MB (write 시점 target)
 );
 ```
 
@@ -212,7 +262,11 @@ CREATE TABLE gold.symbol_vwap_1m (
   computed_at    timestamp
 )
 USING iceberg
-PARTITIONED BY (days(ts_minute), hours(ts_minute));
+PARTITIONED BY (days(ts_minute), hours(ts_minute))
+TBLPROPERTIES (
+  'format-version'='2',
+  'write.target-file-size-bytes'='268435456'    -- 256 MB
+);
 ```
 
 **5분마다 hour partition 전체 OVERWRITE 결정 이유**:
@@ -275,7 +329,7 @@ Phase 1 데모기간 (영업일 ~7일): Bronze ~1 GB, Silver ~0.5 GB, Gold ~1.5 
 | `bronze_to_silver_kis` | **장 시간대** | `*/5 9-16 * * MON-FRI` | 최근 10분 Bronze → Silver MERGE INTO | retries=2, SLA=10min |
 | `silver_to_gold_vwap` | **장 시간대** | 위 DAG에 ExternalTaskSensor chain | 현재 hour partition OVERWRITE | retries=2, SLA=10min |
 | `dim_symbol_daily` | **장 마감 후** | `0 4 * * *` | KIS REST → MERGE silver_dim_symbol | retries=3 |
-| `iceberg_compaction` | **장 마감 후** | `0 18 * * MON-FRI` | Silver/Gold rewrite_data_files | retries=1 |
+| `iceberg_compaction` | **장 마감 후** | `0 18 * * MON-FRI` | Silver/Gold `rewrite_data_files` (target 384 MB, 256–512 MB 범위) | retries=1 |
 | `expire_snapshots` (5/16) | **장 마감 후** | `0 19 * * SUN` | 30일 이전 snapshot 청소 | retries=1 |
 
 **Spark Streaming 자체는 Airflow 외부**: long-running, task 모델과 안 맞음. compose `restart=unless-stopped` + Spark UI 메트릭 사용.
@@ -294,10 +348,11 @@ Phase 1 데모기간 (영업일 ~7일): Bronze ~1 GB, Silver ~0.5 GB, Gold ~1.5 
 | 항목 | 장 시간대 (영업일 09:00–15:30 KST) | 장 마감 후 / 비영업일 (15:30 ~ 익일 09:00) |
 |---|---|---|
 | KIS Producer | active subscribe + Kafka publish | idle (메시지 0 = 정상) |
+| KIS access_token refresh | — (장중 refresh 금지, §6.1.1) | **03:30 KST 매일 고정** |
 | Spark Streaming | 1분 micro-batch active | idle |
 | Bronze→Silver DAG | `*/5` 활성 | 비활성 |
 | Silver→Gold DAG | `*/5` 활성 | 비활성 |
-| dim_symbol 일배치 | — | 04:00 MERGE |
+| dim_symbol 일배치 | — | 04:00 MERGE (token refresh 30분 후) |
 | Compaction | — | 18:00 MON-FRI |
 | expire_snapshots | — | 19:00 SUN (5/16 추가) |
 | 자원 패턴 | streaming + batch peak (FairScheduler 분리) | batch only (Compaction 무거움) |
@@ -393,11 +448,34 @@ infra/terraform/                 (선택, 5/16에 IaC 정리)
 | 실패 모드 | 대응 |
 |---|---|
 | WebSocket 일시 끊김 | exponential backoff 재접속 (1s → 60s cap), 무한 retry, `kis_ws_connected{}` 메트릭 |
-| access_token 만료 (24h) | 만료 23h 시점 미리 refresh (1h buffer). 5분 retry, 30분 후 critical |
-| approval_key 만료 (1일, WebSocket 전용) | 재접속할 때마다 새로 발급. 캐시 X |
+| access_token 만료 (24h) | **고정 시점 03:30 KST 강제 갱신** (장중 refresh 절대 발생 안 함, 아래 정책 참조) |
+| approval_key 만료 (1일, WebSocket 전용) | 03:30 KST 토큰 갱신 시 함께 새 발급 후 WebSocket 재접속 |
 | heartbeat (PINGPONG) timeout | 60s 안 응답 없으면 강제 재접속 |
 
 **구독 state 복구**: KIS WebSocket = connection-state. 재접속 시 종목 list 메모리 보관 → 자동 re-subscribe.
+
+#### 6.1.1 access_token refresh 정책 — 장중 외 강제 (사용자 요구)
+
+**원칙**: 장중(영업일 09:00–15:30 KST) 중 access_token refresh 가 떨어지면 일시적 connection drop · 데이터 손실 risk 발생. 따라서 **refresh는 항상 장 시작 전에 완료**되어야 함.
+
+| 항목 | 값 |
+|---|---|
+| Refresh 시점 | **매일 03:30 KST 고정** (장 시작 5.5h 전 buffer) |
+| Refresh window | 03:30 – 04:30 (1h). 실패 시 5분 간격 retry |
+| Cutoff | 04:30. 4:30까지 실패하면 critical Slack/email alert |
+| Refresh 빈도 | 매일 1회 (KIS access_token TTL = 24h, 매일 새벽에 강제 교체) |
+| 영업일/비영업일 | 동일 — 매일 03:30. KIS API rate limit 무관 운영 단순화 |
+| approval_key (WebSocket 전용) | 토큰 갱신 직후 함께 새 발급 → WebSocket 재접속 (한 번에 묶음) |
+
+**구현 메커니즘**:
+- KIS Producer 컨테이너는 다음 refresh 시각을 항상 **다음 03:30 KST** 로 계산 보관
+- 만료 시각 추적 로직 불필요 — 매일 강제 교체이므로 token 잔여시간 무관
+- 03:30이 영업일 09:00 의 5.5h 전 buffer라 token 갱신 실패 시 수동 대응 충분
+
+**왜 03:30인가**:
+- 새벽 시간대라 KIS API 부하 적음 (다른 사용자도 새벽 갱신 안 함)
+- `dim_symbol_daily` DAG 04:00 보다 30분 앞서 → token이 dim_symbol DAG 의 KIS REST 호출에도 사용 가능 (다음 영업일 마스터 갱신)
+- 장 시작 09:00 까지 5.5h buffer — 04:30 cutoff 후에도 4.5h 동안 수동 대응 가능
 
 ### 6.2 Kafka Producer 설정
 
@@ -412,7 +490,15 @@ KafkaProducer(
 )
 ```
 
-Single broker (RF=1) 인 이유: dev 환경. 100x → MSK + RF=3 + min.insync.replicas=2.
+**Replication factor 정책**:
+
+| 환경 | RF | min.insync.replicas | broker 수 | 사유 |
+|---|---|---|---|---|
+| **Phase 1 (현재, dev)** | **1** | 1 | 1 | 로컬 단일 broker. 학습·발표용. broker 죽으면 데이터 손실 가능하지만 Bronze 적재 후 손실 외에 큰 영향 없음 |
+| **Phase 1 (100x evolution dev)** | 1 | 1 | 1 | 여전히 dev — 100x 시뮬도 단일 broker 기준 (스코프 제한) |
+| **실제 운영 (Phase 2 운영 전환 시)** | **3** | **2** | 3+ | broker 1대 죽어도 가용성 유지 (RF=3 + ISR ≥ 2 = 1대 손실 허용). MSK Serverless 또는 self-managed 3-broker cluster |
+
+→ Phase 1 / 100x evolution 모두 **RF=1 유지**. RF=3 으로의 전환은 "운영 전환" 이라는 별도 사건이며 본 spec scope 밖. **5/16 발표에서 "왜 RF=1?" 질문 시 답**: "dev 환경 단순화 우선. 운영 전환 시 RF=3 + min.insync.replicas=2 + MSK 채택." (이 문장만으로 충분).
 
 ### 6.3 Spark Structured Streaming checkpoint
 
@@ -690,6 +776,11 @@ CLAUDE.md "100만 → 1억" framework 와 정확히 align. 각 단계에서 **�
 | D12 | Cutoff 보수도 | 발표 24h 전 / **48h 전** / 5/9 토 21:00 (모든 fallback 종료) | **5/9 토 21:00** | 발표 당일 코드 commit 0. 안전 마진 충분 |
 | D13 | 100x 비용 framing | 평균값 / **worst-case + budget 초과 명시** | **worst-case 명시** | user 명시 지시 (memory/feedback). 평가에서 정직 = plus |
 | D14 | Test 전략 | 풀 자동 E2E / **단위 + demo prep 겸용** / manual only | **단위 + 겸용** | 3일 budget에서 실효성 우선. 5/16에 통합 보강 |
+| D15 | KIS access_token refresh 시점 | 만료 시각 추적 (가변) / **고정 시점 03:30 KST** | **03:30 KST 고정** | 장중(09:00–15:30) 중 refresh 절대 발생 안 함. 만료 추적 로직 단순화. 04:30 cutoff 후 4.5h buffer로 수동 대응 |
+| D16 | Iceberg target file size | 128MB (write) only / **256MB (write) + 384MB (compaction)** | **256MB write + 384MB compaction** | 사용자 요구 256–512MB 범위. Athena/Spark scan 효율 + S3 큰 file 효율. Compaction이 hour 파티션 small files 1개로 합침 |
+| D17 | Kafka topic 분리 | 단일 토픽 (`kis.raw`) / **이벤트 종류별 토픽** / 종목별 토픽 | **이벤트 종류별** (Phase 1 = `kis.tick.raw` 1개, Phase 2부터 `kis.quote.raw` 등 추가) | schema 안정성 + consumer scaling 독립 + Phase evolution과 align. 종목 차원은 partition으로 분리 (운영 단순화) |
+| D18 | Kafka partition key | **`symbol`** / `null` round-robin / composite hash | **`symbol`** | trade_uid 의 cum_volume monotonic 검증을 위해 종목별 ordering 필수. 디버깅 가시성. hot partition은 100x 시 composite key로 진화 |
+| D19 | Kafka replication factor | **1 (Phase 1 dev)** / 3 (운영) | **1 (Phase 1 + 100x evolution)** | dev 환경 단순화. 운영 전환은 별도 사건이며 spec scope 밖. 발표에서는 "운영 전환 시 RF=3 + ISR=2" 한 줄로 |
 
 ---
 
