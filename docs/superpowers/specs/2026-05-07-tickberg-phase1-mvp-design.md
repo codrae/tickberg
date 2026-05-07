@@ -6,6 +6,7 @@
 | Date | 2026-05-07 (목) |
 | Status | Draft (브레인스톰 승인 후 작성) |
 | 1차 발표 | 2026-05-10 (일) 저녁 8시 |
+| **최종 PPT 제출 마감** | **2026-05-14 (목) 자정 (24:00 KST)** |
 | 최종 발표 | 2026-05-16 (토) |
 | Skill | superpowers:brainstorming → superpowers:writing-plans |
 
@@ -15,7 +16,7 @@
 
 ### 1.1 미션
 
-한국투자증권(KIS) Open API 실시간 체결가를 Kafka·Spark Streaming·Iceberg·Athena·QuickSight 한 줄기로 통과시켜 **5/10 1차 발표에 동작하는 end-to-end 데모**를 보이고, 5/11–5/15 영업일 5일 동안 DART/신용정보원 통합·운영 가시성 강화·100x scale 설계 문서를 추가하여 **5/16 최종 발표**에 부트캠프 평가 4가지 (운영 가시성·100x scale 사고력·Iceberg 필요성·협업·지속가능성) 를 모두 만족시킨다.
+한국투자증권(KIS) Open API 실시간 체결가를 Kafka·Spark Streaming·Iceberg·Athena·QuickSight 한 줄기로 통과시켜 **5/10 1차 발표에 동작하는 end-to-end 데모**를 보이고, 5/11–5/14 영업일 4일 동안 DART/신용정보원 통합·운영 가시성 강화·100x scale 설계 문서를 추가하여 **5/14 목 자정 PPT 제출** + **5/16 최종 발표**에 부트캠프 평가 4가지 (운영 가시성·100x scale 사고력·Iceberg 필요성·협업·지속가능성) 를 모두 만족시킨다. 5/15 금 = α (PPT freeze 후 보너스).
 
 ### 1.2 범위 — 1차 vs 최종
 
@@ -35,7 +36,8 @@
 | 1차 발표일 | 2026-05-10 (일) **= 비영업일** |
 | 최종 발표일 | 2026-05-16 (토) **= 비영업일** |
 | 5/7–5/10 가용 시간 | 8h/일 × 3일 ≈ 24h |
-| 5/11–5/15 가용 시간 | 8h/일 × 5일 = 40h (영업일, 시스템 자동 적재 위에서 작업) |
+| 5/11–5/14 가용 시간 (PPT 마감 전) | 8h/일 × 4일 = 32h (영업일, 시스템 자동 적재 위에서 작업) |
+| 5/15 (PPT freeze 후 알파) | 8h, 추가 개발·다듬기·리허설 (PPT 변경 X) |
 | KIS API | 실계좌 키 보유 + WebSocket 검증 완료 |
 | AWS | 계정 + Iceberg 핸즈온 OK. tickberg 전용 리소스 신규 |
 | 종목 universe | **3 종목 — 삼성전자(005930), SK하이닉스(000660), NAVER(035420)** |
@@ -641,7 +643,7 @@ T-10min  발표 슬라이드 + 녹화 영상 + browser tab 정리
 | 발표 | 녹화 대상 영업일 | 녹화 시점 | 녹화 화면 |
 |---|---|---|---|
 | 5/10 1차 | 5/8 금 | 영업시간 5–10분 (09:30 또는 14:30) | Grafana 패널, Spark Streaming UI, Airflow 5분 cycle, Athena 쿼리 갱신 |
-| 5/16 최종 | 5/15 금 | 동일 | 위 + 운영탭 풍부화 QuickSight |
+| 5/16 최종 | **5/14 목** (PPT 마감 영업일) | 영업시간 5–10분 (am 또는 pm) | 위 + 운영탭 풍부화 QuickSight |
 
 **Replay tool 없음**. 녹화로 대체 → 발표 중 streaming 끊김 risk 0.
 
@@ -682,30 +684,30 @@ T-10min  발표 슬라이드 + 녹화 영상 + browser tab 정리
 
 ### 7.5 5/16 복구 plan
 
-5/10 fallback 활성화한 항목들을 5/11–5/15 영업일 5일 동안 복구:
+5/10 fallback 활성화한 항목들을 **5/11–5/13 영업일 3일 + 5/14 영업일 1일** 동안 복구 (PPT 5/14 자정 마감 기준):
 
-| 5/10 fallback | 5/16 복구 |
+| 5/10 fallback | 5/14 PPT 마감 까지 복구 |
 |---|---|
-| Iceberg MERGE 강등 | 5/15 금 22:00 까지 MERGE INTO 복구 + 통합 검증 |
-| Compaction placeholder | cron 활성화 + 5/13 수 첫 자동 실행 검증 |
-| QuickSight Athena export | refresh 자동화, 운영탭 풍부화 |
+| Iceberg MERGE 강등 | **5/13 수 21:00 까지** MERGE INTO 복구 + 통합 검증 (모든 fallback cutoff 종료 시점) |
+| Compaction placeholder | cron 활성화 + 5/13 수 까지 첫 자동 실행 검증 |
+| QuickSight Athena export | refresh 자동화, 운영탭 풍부화 (5/13 수 21:00 cutoff) |
 
-5/16 cutoff 도 동일 원칙: **5/15 금 22:00** 까지 모든 fallback 결정 종료. 5/16 토 = 슬라이드 + smoke + 발표만.
+5/16 발표용 cutoff 원칙: **5/13 수 21:00 모든 fallback 결정 종료** → 5/14 목 = 마지막 검증·녹화·100x doc·PPT 정리 + **자정 PPT 제출**. 5/15 = α (PPT freeze 후 보너스). 5/16 토 = 발표 리허설 + smoke + 발표만.
 
 ---
 
 ## 8. 6일 분배 + 100x Scale Narrative
 
-### 8.1 6일 캘린더
+### 8.1 6일 캘린더 (PPT 5/14 자정 마감 반영)
 
 | 날짜 | 시스템 자동 (장 시간대) | 시스템 자동 (장 마감 후) | user 수동 (8h/일) |
 |---|---|---|---|
 | 5/11 월 (영업) | KIS 적재 + 5분 cycle batch | 18:00 Compaction · 04:00 dim_symbol | 5/10 fallback 복구 + DART 데이터 모델·DDL 설계 |
-| 5/12 화 (영업) | 동일 | 동일 | DART API client + Bronze 적재 DAG + Silver MERGE |
-| 5/13 수 (영업) | 동일 | 동일 | 신용정보원 xlsx 파서 + Bronze + expire_snapshots DAG |
-| 5/14 목 (영업) | 동일 | 동일 | Grafana 4 패널 + QuickSight 운영탭 풍부화 + Health queries 3개 + 100x design doc 초안 |
-| 5/15 금 (영업, 마지막 E2E) | 동일 + **오후 5–10분 녹화** | 동일 | am: Spark Streaming 통합 테스트 + E2E replay 검증 / pm: 100x design doc 완료 + 슬라이드 + **22:00 모든 cutoff 종료** |
-| 5/16 토 (비영업, 최종 발표) | (영업 외) | — | 슬라이드 마무리 + smoke + 발표 |
+| 5/12 화 (영업) | 동일 | 동일 | DART API client + Bronze 적재 DAG + Silver MERGE. **22:00 Iceberg MERGE 첫 사용 cutoff** |
+| 5/13 수 (영업) | 동일 | 동일 | 신용정보원 xlsx 파서 + Bronze + expire_snapshots DAG + Grafana 4 패널 + Health queries 3개. **12:00 Compaction DAG cutoff · 21:00 QuickSight cutoff = 모든 fallback 결정 종료** |
+| 5/14 목 (**영업, 마지막 E2E + PPT 마감**) | 동일 + **오전·오후 5–10분 녹화 (영업시간)** | 동일 | am 09:00–15:30: Spark Streaming 통합 테스트 + E2E replay 검증 + 영업시간 녹화 / pm 16:00–23:30: 100x design doc 완료 + QuickSight 운영탭 풍부화 + PPT 슬라이드 정리 / **24:00 PPT 제출 마감** |
+| 5/15 금 (영업, **α — PPT freeze 후 보너스**) | 자동 적재 계속 | 자동 batch 계속 | 추가 개발·다듬기·5/16 발표 리허설. **PPT 변경 X** (freeze 후). 발표 시 evaluator 질문에 "5/15 알파 작업 결과" 로 활용 가능 |
+| 5/16 토 (비영업, 최종 발표) | (영업 외) | — | 발표 리허설 + smoke + 발표 |
 
 ### 8.2 Cut 우선순위 (시간 부족 시)
 
@@ -774,7 +776,7 @@ CLAUDE.md "100만 → 1억" framework 와 정확히 align. 각 단계에서 **�
 
 ```
 1. 동기·결정 (1min)        한국 주식 lakehouse · AWS 단일 환경 · 메달리온
-2. 시스템 시연 (3min)       5/15 녹화 영상 + Athena live + QuickSight (KPI탭+운영탭)
+2. 시스템 시연 (3min)       5/14 녹화 영상 + Athena live + QuickSight (KPI탭+운영탭)
 3. Iceberg 정당화 (2min)    MERGE dedup (운영 가치) + OVERWRITE 원자성 + time-travel audit
 4. 운영 가시성 (2min)       4-tier 구조 + 5분 헬스체크 시나리오
 5. 100x Scale 사고 (2min)   dimension 4 + worst-case 비용 + 진화 경로
@@ -786,6 +788,26 @@ CLAUDE.md "100만 → 1억" framework 와 정확히 align. 각 단계에서 **�
 - 100x scale → 슬라이드 5
 - Iceberg 필요성 → 슬라이드 3
 - 협업·지속가능성 → 슬라이드 6 + CLAUDE.md + 본 design doc
+
+### 8.7 Cutoff 시점 (PPT 5/14 자정 마감 기준)
+
+| Cutoff | 시점 | 의미 |
+|---|---|---|
+| Iceberg MERGE 첫 사용 막힘 | **5/12 화 22:00** | 영업일 풀 통합 시도 결과 확인 직후 판단. 5/13 수 종일 fallback 작업 가능 |
+| Compaction DAG 미완성 | **5/13 수 12:00** | 수 오전까지 미완성이면 placeholder fallback |
+| QuickSight refresh 지연 | **5/13 수 21:00** | 모든 fallback 결정 종료. **PPT 마감 27h 전** |
+| AWS budget alert | event-driven 즉시 | 동일 |
+
+**5/13 수 21:00 = 모든 fallback 결정 종료** → 5/14 목 종일 = 마지막 영업일 검증 + 영업시간 녹화 + 100x doc 완료 + PPT 자료 정리 + **24:00 PPT 제출**. 5/14 자정 이후 **PPT 변경 0**.
+
+**5/15 금 = α (PPT freeze 후 보너스)**:
+- 추가 개발 (예: Spark Streaming 통합 테스트 보강, 100x doc 정교화)
+- 코드 정리·리팩토링
+- 5/16 발표 리허설 + 시연 자료 추가 검증
+- evaluator 질문 시 "5/15 알파 작업으로 보강" 답변 자료
+- **PPT 슬라이드 자체는 변경 X** (제출 신뢰성). 발표 시 별도 demo 자료로 활용 가능
+
+**5/16 토 = 발표** — 리허설 + smoke + 발표만. 코드 변경 0, AWS 호출 거의 0.
 
 ---
 
@@ -829,6 +851,7 @@ CLAUDE.md "100만 → 1억" framework 와 정확히 align. 각 단계에서 **�
 | D18 | Kafka partition key | **`symbol`** / `null` round-robin / composite hash | **`symbol`** | trade_uid 의 cum_volume monotonic 검증을 위해 종목별 ordering 필수. 디버깅 가시성. hot partition은 100x 시 composite key로 진화 |
 | D19 | Kafka replication factor | **1 (Phase 1 dev)** / 3 (운영) | **1 (Phase 1 + 100x evolution)** | dev 환경 단순화. 운영 전환은 별도 사건이며 spec scope 밖. 발표에서는 "운영 전환 시 RF=3 + ISR=2" 한 줄로 |
 | D20 | Iceberg ① MERGE 시연 위치 | `dim_symbol` 가상 액면분할 / **`silver.kis_tick_clean` dedup** | **`silver.kis_tick_clean` dedup** | 액면분할은 학습 demo 시나리오로 fictional 색채. dedup 은 streaming 재처리의 일상 운영 가치 → evaluator "Parquet+Glue 안 되나?" 답이 더 강력. dim_symbol 테이블 자체는 Phase 2 확장 보험으로 유지. user 결정 (2026-05-07 brainstorming 검증 단계) |
+| D21 | 최종 발표 cutoff 일정 | 5/15 금 22:00 / **5/14 목 자정 PPT 마감** + 5/13 수 21:00 fallback cutoff | **5/14 자정 PPT 마감** | 부트캠프 PPT 제출 일정 = 목요일 자정. 모든 fallback 결정 5/13 수 21:00 까지 (PPT 마감 27h 전). 5/15 금 = α (PPT freeze 후 보너스). 5/16 토 = 발표 |
 
 ---
 
