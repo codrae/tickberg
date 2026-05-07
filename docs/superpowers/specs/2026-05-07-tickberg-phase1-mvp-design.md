@@ -22,7 +22,7 @@
 | 항목 | 5/10 1차 | 5/16 최종 |
 |---|---|---|
 | 데이터 소스 | 한투 실시간만 (E2E) | + DART 공시 (Bronze + Silver) + 신용정보원 (Bronze) |
-| Iceberg MERGE | dim_symbol 액면분할 시연 | 통합 검증 + edge case 단위 테스트 |
+| Iceberg MERGE | `silver.kis_tick_clean` dedup 시연 (Bronze 중복 → MERGE 자연 흡수) | 통합 검증 + edge case 단위 테스트 |
 | Iceberg 매니지먼트 자동화 | Compaction Airflow DAG 1개 | + expire_snapshots 주간 DAG |
 | 운영 가시성 | Grafana 2 패널 + QuickSight 운영탭 3 viz + Health query 4개 | + Grafana 4 패널 / + QuickSight 3 viz / + Health query 3개 |
 | 100x scale 사고 | 발표 메시지 일부 | dimension 4개 분해 + 비용 worst-case + evolution 경로 design doc |
@@ -244,7 +244,9 @@ PARTITIONED BY (market);
 **SCD2 대신 SCD1 + Iceberg time-travel 결정 이유**:
 - SCD2 = effective_from/to/is_current 컬럼 3개 + 변경 감지 + 기존 row close + 새 row open MERGE 로직 복잡
 - Iceberg 자체가 commit마다 snapshot 보존 → `TIMESTAMP AS OF` 1줄로 과거 상태 조회
-- 트레이드오프: snapshot retention 기간 (30일 default) 너머는 history 사라짐 → 현재 학습용 audit (분기 단위 액면분할 등) 에는 충분. 영구 history 필요 시 retention 늘리거나 분기별 snapshot archive DAG 추가 (Phase 2)
+- 트레이드오프: snapshot retention 기간 (30일 default) 너머는 history 사라짐 → 현재 학습용 audit 에는 충분. 영구 history 필요 시 retention 늘리거나 분기별 snapshot archive DAG 추가 (Phase 2)
+
+**Phase 1 시연 — dim_symbol 자체는 1차 demo의 Iceberg 시연 위치 아님**: par_value/shares_outstanding 컬럼은 schema 보존 (Phase 2 종목 확장·dim 변경 보험). 1차 발표 Iceberg ① MERGE 시연은 `silver.kis_tick_clean` dedup 으로 이전 (§3.5).
 
 ### 3.4 Gold — `gold.symbol_vwap_1m` (Iceberg)
 
@@ -278,9 +280,9 @@ TBLPROPERTIES (
 
 | Iceberg 가치 | 어디서 시연 | 1차 발표 demo 시나리오 |
 |---|---|---|
-| ① MERGE INTO (액면분할·상폐) | `silver.dim_symbol` | 가상: 005930 par_value 5000→100, shares_outstanding 50배. MERGE 후 결과 확인 |
+| ① MERGE INTO (atomic upsert) | `silver.kis_tick_clean` | **Streaming 재시작 시 Bronze 중복 → Silver MERGE 자동 dedup** 시연. 같은 trade_uid 가 두 번 들어와도 1건만 적재됨을 SQL 1줄로 검증. 실제 운영 가치 직결 (가상 시나리오 아님) |
 | ② OVERWRITE 원자성 (대시보드 일관성) | `gold.symbol_vwap_1m` | hour partition OVERWRITE 중 QuickSight refresh = partial read 없음 |
-| ③ Time-travel (Audit Trail) | `silver.dim_symbol` | `TIMESTAMP AS OF '<MERGE 직전>'` vs 현재 비교 SQL |
+| ③ Time-travel (Audit Trail) | `silver.kis_tick_clean` | "어제 12:00 시점에 어떤 ticks 가 있었나" — `TIMESTAMP AS OF '<datetime>'` 디버깅 시연. 재처리 검증·incident audit 가치 |
 
 **"Parquet+Glue로 안 되나?" 질문 답**:
 1. atomic upsert 불가 → MERGE 못 함
@@ -588,12 +590,12 @@ T-10min  발표 슬라이드 + 녹화 영상 + browser tab 정리
 
 ## 7. Test 전략 + Fallback
 
-### 7.1 결정적 사실 — 두 발표일 = 비영업일
+### 7.1 발표일 = 비영업일 (demo strategy 영향만, 시스템 동작과 무관)
 
-- 5/10 일 = **비영업일** (직전 영업일 5/8 금, 차기 영업일 5/11 월)
-- 5/16 토 = **비영업일** (직전 영업일 5/15 금, 차기 영업일 5/18 월)
+- 5/10 일 = 비영업일 (직전 영업일 5/8 금, 차기 영업일 5/11 월)
+- 5/16 토 = 비영업일 (직전 영업일 5/15 금, 차기 영업일 5/18 월)
 
-→ 두 시점 모두 KIS WebSocket 실시간 데이터 0. demo는 직전 영업일 적재 데이터 + 녹화 영상으로 진행.
+→ 두 시점 모두 KIS WebSocket 실시간 데이터 0. **시스템 운영·개발에는 영향 없음** — 그 시점에 영업일 외라 streaming idle 이 정상. 영향은 **demo 보여주는 방식** 에만: 영업일 적재 raw 데이터를 Athena 쿼리로 검증 + Spark Streaming·Grafana 동작은 영업일 녹화 영상으로 시연.
 
 ### 7.2 Demo strategy — (A) 보존 데이터 + 녹화 영상 채택
 
@@ -611,7 +613,7 @@ T-10min  발표 슬라이드 + 녹화 영상 + browser tab 정리
 | 테스트 | 도구 | 검증 | 노력 |
 |---|---|---|---|
 | KIS payload parser unit | pytest, sample fixture 5–10 | KIS H0STCNT0 → Bronze schema 매핑, edge case (negative price, null trade_side, missing field) | 2h |
-| Iceberg MERGE 통합 (= demo prep) | Spark local + Iceberg Hadoop catalog | dim_symbol 가상 액면분할 → MERGE → time-travel before/after assert. 발표 시연 SQL 그대로 | 3h |
+| Iceberg MERGE 통합 (= demo prep) | Spark local + Iceberg Hadoop catalog | `silver.kis_tick_clean` dedup MERGE 시나리오: 동일 trade_uid 2회 INSERT (재처리 시뮬) → MERGE 후 row 수 1건 assert. 발표 시연 SQL 그대로 | 3h |
 | Health queries 사전 검증 | Athena | 4개 query 5/8 데이터로 실행해 정상 임계값 확정 | 1h |
 | 30분 전 smoke checklist | manual (§6.9) | E2E 1회 통과 | 30min |
 
@@ -728,7 +730,7 @@ CLAUDE.md "100만 → 1억" framework 와 정확히 align. 각 단계에서 **�
 ```
 1. 동기·결정 (1min)        한국 주식 lakehouse · AWS 단일 환경 · 메달리온
 2. 시스템 시연 (3min)       5/15 녹화 영상 + Athena live + QuickSight (KPI탭+운영탭)
-3. Iceberg 정당화 (2min)    MERGE 액면분할 + OVERWRITE 원자성 + time-travel
+3. Iceberg 정당화 (2min)    MERGE dedup (운영 가치) + OVERWRITE 원자성 + time-travel audit
 4. 운영 가시성 (2min)       4-tier 구조 + 5분 헬스체크 시나리오
 5. 100x Scale 사고 (2min)   dimension 4 + worst-case 비용 + 진화 경로
 6. Phase 2 로드맵 (1min)    dbt · 자동매매 · MSK · EMR Serverless
@@ -781,6 +783,7 @@ CLAUDE.md "100만 → 1억" framework 와 정확히 align. 각 단계에서 **�
 | D17 | Kafka topic 분리 | 단일 토픽 (`kis.raw`) / **이벤트 종류별 토픽** / 종목별 토픽 | **이벤트 종류별** (Phase 1 = `kis.tick.raw` 1개, Phase 2부터 `kis.quote.raw` 등 추가) | schema 안정성 + consumer scaling 독립 + Phase evolution과 align. 종목 차원은 partition으로 분리 (운영 단순화) |
 | D18 | Kafka partition key | **`symbol`** / `null` round-robin / composite hash | **`symbol`** | trade_uid 의 cum_volume monotonic 검증을 위해 종목별 ordering 필수. 디버깅 가시성. hot partition은 100x 시 composite key로 진화 |
 | D19 | Kafka replication factor | **1 (Phase 1 dev)** / 3 (운영) | **1 (Phase 1 + 100x evolution)** | dev 환경 단순화. 운영 전환은 별도 사건이며 spec scope 밖. 발표에서는 "운영 전환 시 RF=3 + ISR=2" 한 줄로 |
+| D20 | Iceberg ① MERGE 시연 위치 | `dim_symbol` 가상 액면분할 / **`silver.kis_tick_clean` dedup** | **`silver.kis_tick_clean` dedup** | 액면분할은 학습 demo 시나리오로 fictional 색채. dedup 은 streaming 재처리의 일상 운영 가치 → evaluator "Parquet+Glue 안 되나?" 답이 더 강력. dim_symbol 테이블 자체는 Phase 2 확장 보험으로 유지. user 결정 (2026-05-07 brainstorming 검증 단계) |
 
 ---
 
