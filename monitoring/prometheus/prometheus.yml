@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs: [{targets: ["localhost:9090"]}]
+
+  - job_name: kafka-jmx
+    static_configs: [{targets: ["kafka-jmx-exporter:7071"]}]
+
+  - job_name: spark-master
+    metrics_path: /metrics/master/prometheus
+    static_configs: [{targets: ["spark-master:8080"]}]
+
+  - job_name: spark-driver
+    metrics_path: /metrics/prometheus
+    static_configs: [{targets: ["host.docker.internal:4040"]}]
+
+  - job_name: kis-producer
+    static_configs: [{targets: ["kis-producer:9100"]}]
