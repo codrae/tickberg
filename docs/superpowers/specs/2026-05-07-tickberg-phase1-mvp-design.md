@@ -273,8 +273,11 @@ TBLPROPERTIES (
 
 **5분마다 hour partition 전체 OVERWRITE 결정 이유**:
 - minute 파티션 = 영업일 한 종목당 420 파티션/일 → small-files 폭주
-- day 파티션 = 5분마다 그날치 전부 재계산 (비용·atomicity scope 부적절)
+- day 파티션 = 5분마다 그날치 전부 재계산. 변경 안 해야 할 옛 hour row 까지 매번 새 file 작성 → write amplification + manifest 폭증
 - hour 파티션 = 5분마다 60 row OVERWRITE (작음). atomicity scope 명확 ("hour 안에서 atomic, hour 밖은 안 건드림")
+
+**일반 원칙 — Partition scope = Atomicity scope**:
+OVERWRITE 의 의도된 atomic 범위와 partition 단위를 일치시킨다. 우리 의도 = "현재 hour 만 갱신" → partition 도 hour. partition 이 너무 좁으면 small-files (의도보다 좁은 atomic), 너무 넓으면 write amplification (의도보다 넓은 atomic). 이 원칙은 향후 다른 Iceberg 테이블 partition 결정 시에도 첫 질문 — "OVERWRITE/DELETE 의 의도된 scope 가 무엇인가".
 
 ### 3.5 Iceberg 정당화 — 3 가치 ↔ 3 위치 매핑 (CLAUDE.md "Iceberg 핵심 결정")
 
