@@ -38,7 +38,7 @@
 | 5/11–5/15 가용 시간 | 8h/일 × 5일 = 40h (영업일, 시스템 자동 적재 위에서 작업) |
 | KIS API | 실계좌 키 보유 + WebSocket 검증 완료 |
 | AWS | 계정 + Iceberg 핸즈온 OK. tickberg 전용 리소스 신규 |
-| 종목 universe | KOSPI 시총 상위 10 |
+| 종목 universe | **3 종목 — 삼성전자(005930), SK하이닉스(000660), NAVER(035420)** |
 | 로컬 Docker 스택 | 부트캠프 compose 재사용 가능 |
 | user 강점 | Airflow · SQL · ETL 설계 (KTX ETL 실무) |
 | user 우려 | Kafka · Spark Streaming · Iceberg 첫 사용 / KIS WebSocket 안정성 / AWS 비용 |
@@ -235,16 +235,20 @@ PARTITIONED BY (days(ts_minute), hours(ts_minute));
 
 이 3개가 본 모델에서 **실제로 필요한** capability — 평가에서 즉답.
 
-### 3.6 데이터 규모 추정 (10 KOSPI 시총 상위, 영업일 6.5h, 평균 ~130 trades/sec)
+### 3.6 데이터 규모 추정 (3 종목, 영업일 6.5h, 평균 ~45 trades/sec, 피크 ~150/sec)
+
+종목별 일평균 추정 (보수): 삼성전자 ~60만, SK하이닉스 ~30만, NAVER ~10만 → **합계 ~100만 trades/일**.
 
 | Layer | row 수 (영업일 1일) | 압축 후 크기 | 영업일 250일/년 |
 |---|---|---|---|
-| Bronze | ~3M | 300–500 MB/일 | 75–125 GB |
-| Silver `kis_tick_clean` | ~3M | 150–250 MB/일 | 40–65 GB |
-| Silver `dim_symbol` | ~10 | < 1 KB | < 1 MB |
-| Gold `symbol_vwap_1m` | 3,900 (10×6.5×60) | < 1 MB | ~200 MB |
+| Bronze | ~1M | 100–170 MB/일 | 25–43 GB |
+| Silver `kis_tick_clean` | ~1M | 50–90 MB/일 | 13–23 GB |
+| Silver `dim_symbol` | ~3 | < 1 KB | < 1 MB |
+| Gold `symbol_vwap_1m` | 1,170 (3×6.5×60) | < 1 MB | ~60 MB |
 
-Phase 1 데모기간 (영업일 ~7일): Bronze 2–3 GB, Silver 1–2 GB, Gold ~5 MB.
+Phase 1 데모기간 (영업일 ~7일): Bronze ~1 GB, Silver ~0.5 GB, Gold ~1.5 MB.
+
+**100x = 1억 trades/일** (CLAUDE.md "100만→1억" framework 와 정확히 align). Phase 1 baseline 1M/일이 100x base가 됨 → 발표 narrative 깔끔.
 
 ---
 
@@ -346,7 +350,7 @@ infra/terraform/                 (선택, 5/16에 IaC 정리)
         SELECT symbol, COUNT(*), MAX(trade_ts_kst) FROM silver.kis_tick_clean
           WHERE silver_ts >= current_timestamp - interval '15' minute
           GROUP BY symbol;
-        → 10 종목 vs 7 종목 → 3종목 누락 = KIS WebSocket 일부 구독 실패
+        → 3 종목 vs 2 종목 → 1 종목 누락 = KIS WebSocket 일부 구독 실패
 03:00–05:00 — 원인별 액션 (KIS producer 컨테이너 restart 또는 escalate)
 ```
 
@@ -364,7 +368,7 @@ infra/terraform/                 (선택, 5/16에 IaC 정리)
 | Visualization | 데이터 소스 | 의미 |
 |---|---|---|
 | Bronze freshness KPI | `MAX(ingest_ts)` Bronze | "데이터 N분 전 도착" |
-| Symbol coverage Bar | 종목별 1h tick count | 10개 막대, 누락 즉시 발견 |
+| Symbol coverage Bar | 종목별 1h tick count | 3개 막대 (삼성전자/SK하이닉스/NAVER), 누락 즉시 발견 |
 | Silver row count per 5min (24h) | Silver `silver_ts` | throughput 추세 + 영업시간 패턴 |
 
 **5/16 추가**: Iceberg snapshot count over time, late arrival histogram, source coverage (DART/신용정보원).
@@ -375,8 +379,8 @@ infra/terraform/                 (선택, 5/16에 IaC 정리)
 |---|---|
 | `01_bronze_freshness.sql` | `MAX(ingest_ts) vs now` → lag 초 단위 |
 | `02_silver_dedup_rate.sql` | Bronze count / Silver count 1h → 0.95–1.0 정상 |
-| `03_symbol_coverage.sql` | 최근 15분 종목별 tick count → 10개 모두 |
-| `04_gold_partition_completeness.sql` | 영업시간 hour 별 분봉 row 수 → 600 = 10×60 |
+| `03_symbol_coverage.sql` | 최근 15분 종목별 tick count → 3개 모두 (삼성전자/SK하이닉스/NAVER) |
+| `04_gold_partition_completeness.sql` | 영업시간 hour 별 분봉 row 수 → 180 = 3×60 |
 
 **5/16 추가**: `05_late_arrival_distribution`, `06_iceberg_snapshot_growth`, `07_compaction_file_reduction`.
 
@@ -450,13 +454,13 @@ Single broker (RF=1) 인 이유: dev 환경. 100x → MSK + RF=3 + min.insync.re
 
 | 서비스 | 보수 가정 | 비용 |
 |---|---|---|
-| S3 storage | 압축 효율 2x 보수 + Iceberg metadata 누적 5x → ~30 GB | $0.75/월 |
-| S3 PUT/GET | Iceberg commit + Spark checkpoint = ~5K PUT/일 × 7일 | $0.20 |
-| Athena query | 디버깅 부주의 scan = 12.5 GB scan/주 | $0.06 |
+| S3 storage | 압축 효율 2x 보수 + Iceberg metadata 누적 5x → ~10 GB (3종목 baseline) | $0.25/월 |
+| S3 PUT/GET | Iceberg commit + Spark checkpoint = ~5K PUT/일 × 7일 (file 수는 종목 수와 무관) | $0.20 |
+| Athena query | 디버깅 부주의 scan = 5 GB scan/주 | $0.03 |
 | Glue Catalog | 무료 한도 안 | $0 |
 | QuickSight | Author license 필요 (대시보드 작성). Standard Author $24/user/월 (1명 가정). 첫 30일 free trial 만료 가정 | $24 |
 | Cross-AZ data transfer | QuickSight ↔ Athena | $0.50 |
-| **Phase 1 worst case** | | **~$25–27/월** |
+| **Phase 1 worst case** | | **~$24–26/월** (S3 비중 작아져 약간 감소) |
 
 **100x (3억 trades/day) — worst case**:
 
@@ -591,14 +595,14 @@ T-10min  발표 슬라이드 + 녹화 영상 + browser tab 정리
 | 깨짐 | 100x 시 증상 | 해결 (cost) |
 |---|---|---|
 | KIS WebSocket 1 conn/appkey ~40 종목 한도 | 200+ 종목 못 받음 | 멀티 appkey 분할 (5채널). 추가 비용 0~법인계정 |
-| Spark Streaming 단일 worker (~150/sec) | 15,000/sec 못 받음 | EMR Serverless streaming application 분리 + executor auto-scaling. **컴퓨트 ~$16K–32K/년 worst case** |
+| Spark Streaming 단일 worker (Phase 1 ~45/sec 평균, ~150/sec 피크) | 100x = 4,500/sec 평균, ~15K/sec 피크 → 단일 worker 한계 초과 | EMR Serverless streaming application 분리 + executor auto-scaling. **컴퓨트 ~$16K–32K/년 worst case** |
 | Kafka single broker RF=1 | broker 죽음 = 손실 | MSK Serverless + RF=3 + min.insync.replicas=2. ~$50–100/월 |
 
 #### Dimension 2: Batch Window
 
 | 깨짐 | 증상 | 해결 |
 |---|---|---|
-| Bronze→Silver MERGE 5분 안 못 끝남 | Phase 1 = 5분당 ~38K rows × 100 = **~3.8M rows / 5min batch** → 단일 worker로 시간 초과 | (a) 종목별 partition 병렬, (b) trigger 5→2분으로 batch 작아짐, (c) Spark Streaming foreachBatch 분리 |
+| Bronze→Silver MERGE 5분 안 못 끝남 | Phase 1 = 5분당 ~13K rows × 100 = **~1.3M rows / 5min batch** → 단일 worker로 시간 초과 | (a) 종목별 partition 병렬, (b) trigger 5→2분으로 batch 작아짐, (c) Spark Streaming foreachBatch 분리 |
 | Silver→Gold OVERWRITE 부담 | 동일 | Gold cascade (1초 → 1분 → 5분 → 1시간) |
 
 #### Dimension 3: Storage / Compaction (장 마감 후)
@@ -622,16 +626,16 @@ T-10min  발표 슬라이드 + 녹화 영상 + browser tab 정리
 ### 8.5 Evolution 경로 (한 번에 100x 가지 않음)
 
 ```
-Phase 1 (현재, 1x):     로컬 Docker · KOSPI 10 · 일 3M trades
+Phase 1 (1x  =  100만/일):  로컬 Docker · 3 종목 (삼성전자/SK하이닉스/NAVER)
        ↓
-Phase 2 (~10x):         KOSPI200 · 일 30M · MSK · Spark Streaming local
+Phase 2 (10x = 1천만/일):   KOSPI 시총 상위 30 · MSK · Spark Streaming local 유지
        ↓
-Phase 3 (~50x):         KOSPI200 + KOSDAQ150 · EMR Serverless streaming · Iceberg branch
+Phase 3 (50x = 5천만/일):   KOSPI200 · EMR Serverless streaming · Iceberg branch 활용
        ↓
-Phase 4 (100x):         전 종목 · 멀티 region · MSK + EMR Serverless · QuickSight Enterprise
+Phase 4 (100x = 1억/일):    전 종목 (KOSPI + KOSDAQ) · 멀티 region · MSK + EMR Serverless · QuickSight Enterprise
 ```
 
-각 단계에서 **어디가 먼저 깨지는지** 명확 → 단계적 진화 narrative.
+CLAUDE.md "100만 → 1억" framework 와 정확히 align. 각 단계에서 **어디가 먼저 깨지는지** 명확 → 단계적 진화 narrative.
 
 ### 8.6 5/16 최종 발표 구조 (10–12분)
 
@@ -673,7 +677,7 @@ Phase 4 (100x):         전 종목 · 멀티 region · MSK + EMR Serverless · Q
 | # | 결정 | 후보 | 선택 | 이유 |
 |---|---|---|---|---|
 | D1 | Phase 1 데이터 소스 범위 | (A) 한투만 E2E / (B) 한투+DART / (C) 3소스 모두 | **A** | 3일 budget + 신규 컴포넌트 risk 분산. 한 줄기 narrative |
-| D2 | 종목 universe | 1–3 / **10** / 40 / KOSPI200 | **10** | 처리량 충분 + Spark Streaming 첫 사용 안전 |
+| D2 | 종목 universe | 1–3 / 10 / 40 / KOSPI200 | **3 (삼성전자·SK하이닉스·NAVER)** | 일 100만 trades (≈관찰에 충분), CLAUDE.md "100만→1억" 100x baseline 정확 align, 학습용 demo 안정성 우선. user 결정으로 10에서 3으로 축소 |
 | D3 | Bronze 포맷 | Iceberg / **Parquet** | **Parquet** | CLAUDE.md 결정 — streaming snapshot/manifest 오버헤드 회피 |
 | D4 | Bronze→Silver 처리 | streaming-only / single-job 두 sink / **batch 분리** / Bronze 생략 | **batch 분리** | Iceberg MERGE = transaction batch에 자연. user 강점(Airflow) 살림. replayability 보존 |
 | D5 | Spark cluster | 클러스터 2개 / **단일 + FairScheduler** / streaming만 클러스터 | **단일 + FairScheduler** | 로컬 자원 한계. 워크로드 시간 비대칭 활용. 100x 진화 경로 명확 |
