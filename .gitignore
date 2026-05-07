@@ -1,63 +1,47 @@
-cat > .gitignore <<'EOF'
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-.venv/
-env/
 *.egg-info/
+.venv/
+venv/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
+# IDE
+.idea/
+.vscode/
+*.swp
 
-# Spark / Hadoop
-spark-warehouse/
-derby.log
-metastore_db/
-*.crc
-
-# 데이터 파일 (Bronze raw 등은 절대 커밋 X)
-*.parquet
-*.csv
-*.tsv
-*.xlsx
-*.xls
-data/
-raw_data/
-warehouse/
-minio_data/
-
-# 환경변수·시크릿 (한투 API 키, AWS 키 등 절대 커밋 X)
+# Secrets
 .env
-.env.*
-!.env.example
+.env.local
 *.pem
 *.key
-credentials.json
-secrets/
 
-# AWS / Terraform
+# Data files (CLAUDE.md: 데이터 파일 git 커밋 금지)
+*.parquet
+*.csv
+*.xlsx
+*.json.gz
+
+# Spark / Airflow
+spark-warehouse/
+metastore_db/
+derby.log
+logs/
+airflow.cfg
+airflow.db
+webserver_config.py
+
+# Local Docker volumes
+volumes/
 .terraform/
 *.tfstate
 *.tfstate.backup
-.terraform.lock.hcl
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Claude
-.claude/cache/
-EOF
+# Build artifacts
+dist/
+build/
+.coverage
+htmlcov/
