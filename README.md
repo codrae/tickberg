@@ -36,7 +36,6 @@ Iceberg Lakehouse에 적재하고, DART 공시·신용정보원 데이터와 연
 4. Docker 스택 기동: `docker compose -f infra/docker/docker-compose.yml up -d`
 5. Airflow UI: http://localhost:8080  (admin/admin)
 6. Grafana: http://localhost:3000  (admin/admin)
-7. Spark UI: http://localhost:8080  (Spark master 포트 충돌 시 compose에서 변경)
+7. Spark Master UI: http://localhost:8081
 
 자세한 architecture 는 `docs/superpowers/specs/2026-05-07-tickberg-phase1-mvp-design.md` 참고.
-EOF
