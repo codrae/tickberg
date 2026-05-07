@@ -1,0 +1,42 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3Bucket",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+      "Resource": "arn:aws:s3:::tickberg-lakehouse"
+    },
+    {
+      "Sid": "S3Object",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::tickberg-lakehouse/*"
+    },
+    {
+      "Sid": "Glue",
+      "Effect": "Allow",
+      "Action": [
+        "glue:GetDatabase", "glue:GetDatabases",
+        "glue:CreateTable", "glue:GetTable", "glue:GetTables", "glue:UpdateTable", "glue:DeleteTable",
+        "glue:GetPartition", "glue:GetPartitions", "glue:CreatePartition", "glue:BatchCreatePartition",
+        "glue:UpdatePartition", "glue:DeletePartition", "glue:BatchDeletePartition"
+      ],
+      "Resource": [
+        "arn:aws:glue:ap-northeast-2:*:catalog",
+        "arn:aws:glue:ap-northeast-2:*:database/tickberg",
+        "arn:aws:glue:ap-northeast-2:*:table/tickberg/*"
+      ]
+    },
+    {
+      "Sid": "Athena",
+      "Effect": "Allow",
+      "Action": [
+        "athena:StartQueryExecution", "athena:GetQueryExecution",
+        "athena:GetQueryResults", "athena:StopQueryExecution",
+        "athena:GetWorkGroup", "athena:ListWorkGroups"
+      ],
+      "Resource": "arn:aws:athena:ap-northeast-2:*:workgroup/tickberg-wg"
+    }
+  ]
+}
