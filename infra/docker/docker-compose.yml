@@ -58,11 +58,10 @@ services:
     build: ./spark
     image: tickberg/spark:3.5.1-iceberg-1.5.2
     container_name: tickberg-spark-master
+    env_file: ../../.env
     environment:
       SPARK_MODE: master
       SPARK_MASTER_HOST: spark-master
-      AWS_PROFILE: ${AWS_PROFILE:-tickberg}
-      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
     ports: ["7077:7077", "8081:8080"]
     volumes:
       - ../../code:/opt/spark/code
@@ -71,13 +70,12 @@ services:
   spark-worker:
     image: tickberg/spark:3.5.1-iceberg-1.5.2
     container_name: tickberg-spark-worker
+    env_file: ../../.env
     environment:
       SPARK_MODE: worker
       SPARK_MASTER_URL: spark://spark-master:7077
       SPARK_WORKER_MEMORY: 4G
       SPARK_WORKER_CORES: 2
-      AWS_PROFILE: ${AWS_PROFILE:-tickberg}
-      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
     depends_on: [spark-master]
     volumes:
       - ../../code:/opt/spark/code
@@ -169,6 +167,36 @@ services:
       kafka:
         condition: service_healthy
     ports: ["9100:9100"]
+
+  spark-streaming:
+    image: tickberg/spark:3.5.1-iceberg-1.5.2
+    container_name: tickberg-spark-streaming
+    restart: unless-stopped
+    env_file: ../../.env
+    depends_on:
+      - spark-master
+      - spark-worker
+      - kafka
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      KAFKA_TOPIC_TICK: ${KAFKA_TOPIC_TICK:-kis.tick.raw}
+    volumes:
+      - ../../code:/opt/spark/code
+      - ~/.aws:/opt/bitnami/spark/.aws:ro
+    command: >
+      spark-submit
+        --master spark://spark-master:7077
+        --deploy-mode client
+        --conf spark.driver.host=tickberg-spark-streaming
+        --conf spark.driver.port=4041
+        --conf spark.driver.bindAddress=0.0.0.0
+        --conf spark.ui.port=4040
+        --conf spark.scheduler.mode=FAIR
+        --conf spark.scheduler.allocation.file=/opt/bitnami/spark/conf/fairscheduler.xml
+        --executor-memory 2g
+        --total-executor-cores 2
+        /opt/spark/code/pipelines/bronze/bronze_kis_tick_streaming.py
+    ports: ["4040:4040"]
 
 volumes:
   kafka_data:

@@ -25,5 +25,6 @@ RUN curl -fsSLO "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark
 
 COPY spark-defaults.conf /opt/bitnami/spark/conf/spark-defaults.conf
 COPY metrics.properties /opt/bitnami/spark/conf/metrics.properties
+COPY fairscheduler.xml /opt/bitnami/spark/conf/fairscheduler.xml
 
 USER 1001
