@@ -22,7 +22,7 @@ x-airflow-common: &airflow-common
 
 services:
   kafka:
-    image: bitnami/kafka:3.7
+    image: bitnamilegacy/kafka:3.7
     container_name: tickberg-kafka
     ports: ["9092:9092", "9094:9094"]
     environment:
@@ -46,7 +46,7 @@ services:
       retries: 10
 
   kafka-jmx-exporter:
-    image: bitnami/jmx-exporter:0.20.0
+    image: bitnamilegacy/jmx-exporter:0.20.0
     container_name: tickberg-kafka-jmx
     ports: ["7071:7071"]
     command: ["7071", "/etc/jmx-exporter/kafka.yml"]

@@ -69,7 +69,6 @@ async def main() -> None:
             enable_idempotence=True,
             linger_ms=50,
             compression_type="snappy",
-            max_in_flight_requests_per_connection=5,
         )
         await producer.start()
         try:
