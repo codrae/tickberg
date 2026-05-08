@@ -153,6 +153,20 @@ services:
       - ../../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports: ["3000:3000"]
 
+  kis-producer:
+    build: ./kis-producer
+    container_name: tickberg-kis-producer
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      METRICS_PORT: "9100"
+      TZ: Asia/Seoul
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports: ["9100:9100"]
+
 volumes:
   kafka_data:
   airflow_postgres_data:
