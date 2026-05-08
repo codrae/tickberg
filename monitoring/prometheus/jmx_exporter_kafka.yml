@@ -2,21 +2,23 @@ hostPort: kafka:9999
 ssl: false
 lowercaseOutputName: true
 rules:
-  - pattern: kafka.consumer<type=consumer-fetch-manager-metrics, client-id=(.+), topic=(.+), partition=(.+)><>(.+):
+  - pattern: 'kafka.consumer<type=consumer-fetch-manager-metrics, client-id=(.+), topic=(.+), partition=(.+)><>(.+):'
     name: kafka_consumer_$4
     labels:
       client_id: "$1"
       topic: "$2"
       partition: "$3"
-  - pattern: kafka.controller<type=KafkaController, name=(.+)><>Value
+  - pattern: 'kafka.controller<type=KafkaController, name=(.+)><>Value'
     name: kafka_controller_$1
-  - pattern: kafka.server<type=BrokerTopicMetrics, name=(.+), topic=(.+)><>OneMinuteRate
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=(.+), topic=(.+)><>OneMinuteRate'
     name: kafka_topic_$1_rate
     labels:
       topic: "$2"
-  - pattern: kafka.consumergroup<type=GroupMetadataManager, group=(.+), topic=(.+), partition=(.+)><>Value
-    name: kafka_consumergroup_lag
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=(.+)><>OneMinuteRate'
+    name: kafka_broker_$1_rate
+  - pattern: 'kafka.server<type=ReplicaManager, name=(.+)><>Value'
+    name: kafka_replica_$1
+  - pattern: 'kafka.network<type=RequestMetrics, name=(.+), request=(.+)><>Mean'
+    name: kafka_request_$1_mean
     labels:
-      group: "$1"
-      topic: "$2"
-      partition: "$3"
+      request: "$2"

@@ -39,9 +39,10 @@ services:
       KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_CFG_LOG_RETENTION_HOURS: 168
       KAFKA_KRAFT_CLUSTER_ID: tickberg-kafka-cluster
+      KAFKA_JMX_OPTS: "-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.local.only=false -Djava.rmi.server.hostname=kafka -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.rmi.port=9999"
     volumes: ["kafka_data:/bitnami/kafka"]
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      test: ["CMD-SHELL", "KAFKA_JMX_OPTS= kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
       interval: 10s
       retries: 10
 
