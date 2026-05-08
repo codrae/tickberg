@@ -82,7 +82,7 @@ class KisWebSocket:
             while True:
                 msg = await asyncio.wait_for(ws.recv(), timeout=_HEARTBEAT_TIMEOUT_S)
                 if isinstance(msg, str) and msg.startswith("{"):
-                    # control frame (subscribe ack / heartbeat). skip.
+                    log.info("ws control frame: %s", msg[:500])
                     continue
                 payload = msg if isinstance(msg, str) else msg.decode("utf-8")
                 try:
