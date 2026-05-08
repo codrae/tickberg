@@ -1,21 +1,23 @@
 version: "3.9"
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.3-python3.11
+  build: ./airflow
+  image: tickberg/airflow:2.9.3
+  env_file: ../../.env
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Seoul
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
-    AWS_PROFILE: ${AWS_PROFILE:-tickberg}
-    AWS_REGION: ${AWS_REGION:-ap-northeast-2}
-    S3_BUCKET: ${S3_BUCKET:-tickberg-lakehouse}
   volumes:
     - ../../orchestration/dags:/opt/airflow/dags
     - ../../code:/opt/airflow/code
     - ~/.aws:/home/airflow/.aws:ro
     - airflow_logs:/opt/airflow/logs
+    - /var/run/docker.sock:/var/run/docker.sock
+  group_add:
+    - "0"
   depends_on:
     airflow-postgres:
       condition: service_healthy
