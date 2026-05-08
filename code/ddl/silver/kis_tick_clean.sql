@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS tickberg.silver_kis_tick_clean (
   ingest_ts       timestamp,
   silver_ts       timestamp
 )
-PARTITIONED BY (day(trade_ts_kst), hour(trade_ts_kst))
+PARTITIONED BY (hour(trade_ts_kst))
 LOCATION 's3://tickberg-lakehouse/silver/kis_tick_clean/'
 TBLPROPERTIES (
   'table_type'                       = 'ICEBERG',

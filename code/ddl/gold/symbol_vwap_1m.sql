@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS tickberg.gold_symbol_vwap_1m (
   trade_count    int,
   computed_at    timestamp
 )
-PARTITIONED BY (day(ts_minute), hour(ts_minute))
+PARTITIONED BY (hour(ts_minute))
 LOCATION 's3://tickberg-lakehouse/gold/symbol_vwap_1m/'
 TBLPROPERTIES (
   'table_type'                   = 'ICEBERG',

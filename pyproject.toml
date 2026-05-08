@@ -5,7 +5,7 @@ requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["infra/docker/kis-producer", "code"]
+pythonpath = [".", "infra/docker/kis-producer", "code"]
 addopts = "-ra -q"
 asyncio_mode = "auto"
 
