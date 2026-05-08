@@ -162,6 +162,9 @@ services:
       KAFKA_BOOTSTRAP: kafka:9092
       METRICS_PORT: "9100"
       TZ: Asia/Seoul
+      KIS_TOKEN_CACHE: /app/data/kis_token.json
+    volumes:
+      - kis_producer_data:/app/data
     depends_on:
       kafka:
         condition: service_healthy
@@ -171,6 +174,7 @@ volumes:
   kafka_data:
   airflow_postgres_data:
   airflow_logs:
+  kis_producer_data:
 
 networks:
   default:

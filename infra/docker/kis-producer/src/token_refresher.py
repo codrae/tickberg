@@ -15,7 +15,7 @@ from src.kis_auth import KisAuth
 log = logging.getLogger("token_refresher")
 KST = ZoneInfo("Asia/Seoul")
 _REFRESH_TIME = time(3, 30)
-_RETRY_BACKOFF_S = 5 * 60   # 5분 간격
+_RETRY_BACKOFF_S = 70   # KIS 토큰 발급 1분 1회 throttle 회피용 70초
 _CUTOFF_TIME = time(4, 30)
 
 

@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 from datetime import date, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -56,12 +57,15 @@ async def main() -> None:
 
     health_metrics.start(port=int(os.environ.get("METRICS_PORT", "9100")))
 
+    cache_path = Path(os.environ.get("KIS_TOKEN_CACHE", "/app/data/kis_token.json"))
+
     async with aiohttp.ClientSession() as session:
         auth = KisAuth(
             app_key=app_key, app_secret=app_secret, base_url=base_url,
             http=_AiohttpKisHttp(base_url, session),
+            cache_path=cache_path,
         )
-        await auth.refresh()
+        await auth.ensure_valid()
 
         producer = AIOKafkaProducer(
             bootstrap_servers=bootstrap,
