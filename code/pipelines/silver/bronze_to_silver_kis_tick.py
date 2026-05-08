@@ -64,9 +64,15 @@ def merge_bronze_into_silver(
 
 
 def _read_bronze_window(spark: SparkSession, bucket: str, window_minutes: int) -> DataFrame:
-    """Read recent N minutes of Bronze. Caller passes Glue-catalog table."""
+    """Read recent N minutes of Bronze.
+
+    Bronze 는 Parquet (non-Iceberg) 라 Iceberg-only `glue` 카탈로그로
+    접근 불가. S3 path 로 직접 읽고 Hive-style partition (dt=, hr=) 자동
+    discovery. 정확한 ingest_ts 필터는 read 후 적용.
+    """
+    bronze_path = f"s3a://{bucket}/bronze/kis_tick_raw/"
     return (
-        spark.table("glue.tickberg.bronze_kis_tick_raw")
+        spark.read.parquet(bronze_path)
         .where(
             F.col("ingest_ts")
             >= F.current_timestamp() - F.expr(f"INTERVAL {window_minutes} MINUTES")
