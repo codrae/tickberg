@@ -1,0 +1,40 @@
+groups:
+  - name: tickberg-1a
+    interval: 30s
+    rules:
+      - alert: KisWebSocketDown
+        expr: kis_ws_connected == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "KIS WebSocket disconnected for 5m"
+          description: "장 시간대 라면 종목 데이터 손실 중 (장 마감 후 무시 가능)."
+
+      - alert: ProducerParseErrorSpike
+        expr: increase(kis_parse_errors_total[5m]) > 100
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "KIS parse error rate elevated (>100/5m)"
+          description: "KIS payload 포맷 변경 또는 producer 버그 의심. 컨트롤 프레임 로그 확인."
+
+      - alert: TokenRefreshFailure
+        expr: increase(kis_token_refresh_failures_total[5m]) > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "KIS token refresh failed in last 5m"
+          description: "03:30 KST 정시 갱신 실패. 04:30 cutoff 전에 수동 확인."
+
+      - alert: KafkaBrokerInRateMismatch
+        expr: |
+          abs(
+            sum(60 * rate(kis_messages_published_total[5m]))
+            -
+            60 * sum(kafka_broker_messagesinpersec_rate)
+          ) > 500
+        for: 3m
+        labels: {severity: warning}
+        annotations:
+          summary: "Producer publish rate vs Kafka broker in rate diff > 500/min"
+          description: "Producer 가 Kafka 에 publish 하는데 broker 가 못 받는 중. aiokafka backlog 또는 broker pressure."
