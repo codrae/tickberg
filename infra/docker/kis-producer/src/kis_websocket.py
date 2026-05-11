@@ -83,6 +83,13 @@ class KisWebSocket:
                 msg = await asyncio.wait_for(ws.recv(), timeout=_HEARTBEAT_TIMEOUT_S)
                 if isinstance(msg, str) and msg.startswith("{"):
                     log.info("ws control frame: %s", msg[:500])
+                    # KIS application-level heartbeat — 같은 frame 을 pong 으로 회신.
+                    # KIS 공식 sample (open-trading-api kis_auth.py) 와 동일 패턴.
+                    try:
+                        if json.loads(msg).get("header", {}).get("tr_id") == "PINGPONG":
+                            await ws.pong(msg.encode("utf-8"))
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
                     continue
                 payload = msg if isinstance(msg, str) else msg.decode("utf-8")
                 try:
@@ -99,4 +106,5 @@ class KisWebSocket:
 class _WsLike:  # pragma: no cover — structural only
     async def send(self, data: str) -> None: ...
     async def recv(self) -> str | bytes: ...
+    async def pong(self, data: bytes = b"") -> None: ...
     async def close(self) -> None: ...

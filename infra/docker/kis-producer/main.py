@@ -41,7 +41,12 @@ def _today_kst() -> date:
 
 
 async def _ws_connect(url: str):
-    return await websockets.connect(url, ping_interval=30, ping_timeout=20)
+    # KIS WebSocket 은 WS-level ping/pong (RFC 6455 control frame) 미지원.
+    # 대신 application-level PINGPONG JSON 메시지를 KIS 가 보냄 → 우리는
+    # kis_websocket._connect_and_consume() 에서 받아서 ws.pong() 으로 회신.
+    # ping_interval=None 으로 우리 측 자동 WS-ping 비활성화 (이전엔 30초
+    # ping → 20초 pong 미수신 → 1011 keepalive timeout disconnect 반복).
+    return await websockets.connect(url, ping_interval=None, ping_timeout=None)
 
 
 async def main() -> None:
