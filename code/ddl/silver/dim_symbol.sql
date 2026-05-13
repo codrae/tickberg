@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS tickberg.silver_dim_symbol (
 PARTITIONED BY (market)
 LOCATION 's3://tickberg-lakehouse/silver/dim_symbol/'
 TBLPROPERTIES (
-  'table_type'      = 'ICEBERG',
-  'format'          = 'parquet',
-  'format-version'  = '2'
+  'table_type' = 'ICEBERG',
+  'format'     = 'parquet'
 );

@@ -15,12 +15,7 @@ CREATE TABLE IF NOT EXISTS tickberg.silver_kis_tick_clean (
 PARTITIONED BY (hour(trade_ts_kst))
 LOCATION 's3://tickberg-lakehouse/silver/kis_tick_clean/'
 TBLPROPERTIES (
-  'table_type'                       = 'ICEBERG',
-  'format'                           = 'parquet',
-  'format-version'                   = '2',
-  'write.distribution-mode'          = 'hash',
-  'write.target-file-size-bytes'     = '268435456',
-  'write.delete.mode'                = 'merge-on-read',
-  'write.update.mode'                = 'merge-on-read',
-  'write.merge.mode'                 = 'merge-on-read'
+  'table_type'                        = 'ICEBERG',
+  'format'                            = 'parquet',
+  'write_target_data_file_size_bytes' = '268435456'
 );

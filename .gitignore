@@ -8,9 +8,11 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
-# IDE
+# IDE / OS
 .idea/
 .vscode/
+.claude/
+.DS_Store
 *.swp
 
 # Secrets

@@ -13,8 +13,7 @@ CREATE TABLE IF NOT EXISTS tickberg.gold_symbol_vwap_1m (
 PARTITIONED BY (hour(ts_minute))
 LOCATION 's3://tickberg-lakehouse/gold/symbol_vwap_1m/'
 TBLPROPERTIES (
-  'table_type'                   = 'ICEBERG',
-  'format'                       = 'parquet',
-  'format-version'               = '2',
-  'write.target-file-size-bytes' = '268435456'
+  'table_type'                        = 'ICEBERG',
+  'format'                            = 'parquet',
+  'write_target_data_file_size_bytes' = '268435456'
 );

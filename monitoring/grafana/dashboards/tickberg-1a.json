@@ -1,86 +1,181 @@
 {
-  "title": "tickberg — 1차 운영 패널",
-  "uid": "tickberg-1a",
-  "timezone": "Asia/Seoul",
-  "schemaVersion": 39,
-  "refresh": "30s",
-  "time": {"from": "now-1h", "to": "now"},
+  "id": 1,
   "panels": [
     {
-      "id": 1,
-      "type": "stat",
-      "title": "KIS WebSocket 연결 (0=down, 1=up)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "description": "장 시간대(09:00–15:30 KST)뿐 아니라 마감 후에도 1 유지. 0 이면 producer→Kafka 흐름 정지.",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"expr": "kis_ws_connected", "legendFormat": "ws_connected"}],
       "fieldConfig": {
         "defaults": {
-          "thresholds": {"mode": "absolute", "steps": [
-            {"color": "red", "value": null},
-            {"color": "green", "value": 1}
-          ]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
         }
       },
-      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "kis_ws_connected",
+          "legendFormat": "ws_connected"
+        }
+      ],
+      "title": "KIS WebSocket 연결 (0=down, 1=up)",
+      "type": "stat"
     },
     {
-      "id": 2,
-      "type": "stat",
-      "title": "Producer 누적 publish",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "description": "총 KIS tick → Kafka publish 건수. 장 시간대에만 증가.",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{
-        "expr": "sum(kis_messages_published_total)",
-        "legendFormat": "total"
-      }],
-      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum(kis_messages_published_total)",
+          "legendFormat": "total"
+        }
+      ],
+      "title": "Producer 누적 publish",
+      "type": "stat"
     },
     {
-      "id": 3,
-      "type": "stat",
-      "title": "Producer 에러 (parse + refresh)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "description": "장 시간대 모두 0 이상적. >0 이면 코드/KIS 이슈 가능.",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [
-        {"expr": "kis_parse_errors_total", "legendFormat": "parse_errors"},
-        {"expr": "kis_token_refresh_failures_total", "legendFormat": "refresh_failures"}
-      ],
       "fieldConfig": {
         "defaults": {
-          "thresholds": {"mode": "absolute", "steps": [
-            {"color": "green", "value": null},
-            {"color": "yellow", "value": 1},
-            {"color": "red", "value": 10}
-          ]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
         }
       },
-      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 0}
-    },
-    {
-      "id": 4,
-      "type": "timeseries",
-      "title": "종목별 publish rate (ticks/min)",
-      "description": "한 종목 라인이 0 으로 떨어지면 종목 거래정지/심볼 이슈. 모두 0 = 장 마감.",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{
-        "expr": "60 * rate(kis_messages_published_total[1m])",
-        "legendFormat": "{{symbol}}"
-      }],
-      "fieldConfig": {"defaults": {"unit": "short"}},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}
-    },
-    {
-      "id": 5,
-      "type": "timeseries",
-      "title": "Producer ↔ Kafka broker 흐름 일치성 (msgs/min)",
-      "description": "두 라인이 거의 일치해야 정상. 큰 갭 = aiokafka backlog 또는 broker pressure.",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
       "targets": [
-        {"expr": "sum(60 * rate(kis_messages_published_total[1m]))", "legendFormat": "producer.publish/min"},
-        {"expr": "60 * sum(kafka_broker_messagesinpersec_rate)", "legendFormat": "kafka.broker.in/min"}
+        {
+          "expr": "kis_parse_errors_total",
+          "legendFormat": "parse_errors"
+        },
+        {
+          "expr": "kis_token_refresh_failures_total",
+          "legendFormat": "refresh_failures"
+        }
       ],
-      "fieldConfig": {"defaults": {"unit": "short"}},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}
+      "title": "Producer 에러 (parse + refresh)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "한 종목 라인이 0 으로 떨어지면 종목 거래정지/심볼 이슈. 모두 0 = 장 마감.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "label_replace(label_replace(label_replace(60 * rate(kis_messages_published_total[1m]), \"symbol_name\", \"삼성전자\", \"symbol\", \"005930\"), \"symbol_name\", \"SK하이닉스\", \"symbol\", \"000660\"), \"symbol_name\", \"NAVER\", \"symbol\", \"035420\")",
+          "legendFormat": "{{symbol_name}}"
+        }
+      ],
+      "title": "종목별 publish rate (ticks/min)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "두 라인이 거의 일치해야 정상. 큰 갭 = aiokafka backlog 또는 broker pressure.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "sum(60 * rate(kis_messages_published_total[1m]))",
+          "legendFormat": "producer.publish/min"
+        },
+        {
+          "expr": "60 * sum(kafka_broker_messagesinpersec_rate)",
+          "legendFormat": "kafka.broker.in/min"
+        }
+      ],
+      "title": "Producer ↔ Kafka broker 흐름 일치성 (msgs/min)",
+      "type": "timeseries"
     }
-  ]
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timezone": "Asia/Seoul",
+  "title": "tickberg — 1차 운영 패널",
+  "uid": "tickberg-1a",
+  "version": 1
 }

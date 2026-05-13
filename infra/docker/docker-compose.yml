@@ -169,6 +169,26 @@ services:
       - ../../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports: ["3000:3000"]
 
+  superset:
+    build: ./superset
+    image: tickberg/superset:4.0.2
+    container_name: tickberg-superset
+    # restart 정책 일부러 'no' — 발표 외 시간엔 정지 유지 (Athena 비용 회피)
+    restart: "no"
+    environment:
+      SUPERSET_SECRET_KEY: "tickberg-dev-secret-rotate-before-prod"
+      AWS_PROFILE: default
+      AWS_REGION: ap-northeast-2
+      SUPERSET_METADATA_URI: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/superset
+    volumes:
+      - ../superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ~/.aws:/app/.aws:ro
+      - superset_home:/app/superset_home
+    ports: ["8088:8088"]
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+
   kis-producer:
     build: ./kis-producer
     container_name: tickberg-kis-producer
@@ -223,6 +243,7 @@ volumes:
   airflow_postgres_data:
   airflow_logs:
   kis_producer_data:
+  superset_home:
 
 networks:
   default:
