@@ -1,0 +1,47 @@
+[
+  {
+    "ingest_ts": "2026-05-08T00:30:05",
+    "kafka_partition": 0,
+    "kafka_offset": 1,
+    "symbol": "005930",
+    "trade_ts_kst": "2026-05-08T09:30:01",
+    "price": "72500",
+    "volume": 100,
+    "cum_volume": 1,
+    "cum_amount": 7250000,
+    "trade_side": "+",
+    "best_ask_price": "72500",
+    "best_bid_price": "72400",
+    "raw_payload": "fixture"
+  },
+  {
+    "ingest_ts": "2026-05-08T00:30:05",
+    "kafka_partition": 0,
+    "kafka_offset": 2,
+    "symbol": "005930",
+    "trade_ts_kst": "2026-05-08T09:30:02",
+    "price": "72600",
+    "volume": 200,
+    "cum_volume": 2,
+    "cum_amount": 21770000,
+    "trade_side": "+",
+    "best_ask_price": "72600",
+    "best_bid_price": "72500",
+    "raw_payload": "fixture"
+  },
+  {
+    "ingest_ts": "2026-05-08T00:30:06",
+    "kafka_partition": 0,
+    "kafka_offset": 3,
+    "symbol": "005930",
+    "trade_ts_kst": "2026-05-08T09:30:01",
+    "price": "72500",
+    "volume": 100,
+    "cum_volume": 1,
+    "cum_amount": 7250000,
+    "trade_side": "+",
+    "best_ask_price": "72500",
+    "best_bid_price": "72400",
+    "raw_payload": "fixture_dup"
+  }
+]
