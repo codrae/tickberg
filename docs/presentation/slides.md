@@ -519,3 +519,106 @@ Kafka 쪽은 JMX exporter 로 broker in-rate 를 받아서, producer 가 publish
 Grafana 대시보드는 1a, 1b 두 개입니다. 목표는 장애 인지 시간 5분 이내입니다.
 
 ---
+
+## 26. 예상 문제 ① — Small Files / Scale out 10x·100x
+
+> 일 100만 → 1억 tick 시 첫 번째로 깨지는 건 Bronze 1분 trigger.
+
+- Small files : Bronze 분당 micro-batch → S3 Parquet 수 = 분당 1 + 종목수 × 파티션
+- 10x (일 1천만) : Spark micro-batch trigger 1 → 5 분으로 늘림 / Compaction 빈도 증가
+- 100x (일 1억) : Bronze = MSK / EMR Serverless / Spark Structured Streaming → Flink 전환 검토
+- Silver write amplification (COW) : MERGE 시 partition rewrite 비용 → MOR 전환
+
+**시각자료**: 깨지는 순서 다이어그램 — 1x → 10x → 100x 단계별 첫 번째 깨지는 자원.
+
+**Speaker Note:**
+이 슬라이드는 평가 4 축 중 100x 사고력에 정면으로 답합니다.
+일 100 만 tick 인 현재 규모에서 가장 먼저 깨지는 건 Bronze 1 분 micro-batch 입니다. 분당 파일 수가 너무 많아지면 S3 LIST 비용이 폭증합니다. 10 배 규모면 trigger 를 5 분으로 늘리고 Compaction 빈도를 키우는 게 합리적입니다.
+100 배 규모면 Bronze 를 MSK + EMR Serverless 로 옮기는 걸 검토합니다. Spark Structured Streaming 의 한계를 넘으면 Flink 전환도 고려합니다.
+Silver 의 COW write amplification 도 100x 에서 깨집니다. MERGE 시 partition 통째로 rewrite 하는데, partition 당 데이터 양이 크면 비용이 폭증합니다. MOR 로 전환해야 합니다.
+중요한 건 "지금 깨진 게 아니고, 깨질 순서를 사전에 알고 있다" 는 점입니다.
+
+---
+
+## 27. 예상 문제 ② — OOM / S3 네트워크 장애
+
+> 어디서 데이터가 유실 가능한지 정확히 안다 — Kafka 이후는 replay, Kafka 이전은 알람.
+
+- Spark Bronze consumer OOM : Kafka offset checkpoint (S3) → 재기동 시 마지막 offset 부터 재개 (유실 0)
+- KIS Producer OOM : 라이브 WebSocket 구간이라 다운타임 tick 유실 → `restart=unless-stopped` + `kis_ws_connected` 알람
+- S3 PUT 일시 장애 : Spark Structured Streaming checkpoint 가 미완료 batch 다음 trigger 에 재시도
+- 가드레일 : Kafka retention 7일 = consumer replay 윈도우 / AWS Budgets 월 $20 알람
+
+**시각자료**: failure mode 표 — 장애 지점 / 영향 / 복구 / 안전망 (Kafka 전후 구분).
+
+**Speaker Note:**
+운영 중 장애를 다룰 때 핵심은 어디서 데이터가 유실될 수 있는지를 정확히 아는 것입니다.
+Kafka 이후 구간은 안전합니다. Spark Bronze consumer 가 OOM 으로 죽어도 Kafka offset checkpoint 가 S3 에 있어서, 재기동하면 마지막 offset 부터 재개합니다. 유실이 0 입니다. 일부 메시지가 중복돼도 Silver MERGE 의 trade_uid 가 멱등이라 안전합니다.
+Kafka 이전 구간은 다릅니다. KIS Producer 가 OOM 으로 죽으면 KIS WebSocket 은 라이브 피드라 그 다운타임 동안의 tick 은 유실됩니다. 솔직히 인정하는 한계입니다. 대응은 두 가지인데, 컨테이너를 restart=unless-stopped 로 띄워 자동 재기동하고, kis_ws_connected 메트릭으로 5분 안에 알람을 받습니다.
+S3 PUT 이 일시적으로 장애가 나도 Spark Structured Streaming 의 checkpoint 가 미완료 batch 를 다음 trigger 에서 재시도합니다.
+Kafka retention 을 7일로 둔 이유가 여기 있습니다. consumer replay 윈도우입니다. 월요일 아침에 발견한 이슈를 금요일까지 거슬러 재처리할 수 있습니다.
+비용 가드레일도 별도입니다. AWS Budgets 로 월 20달러 알람이 걸려 있습니다.
+
+---
+
+## 28. 코드·인프라 노력 — 강결합 회피, 분리, 자동화
+
+> 6 개월 후 합류한 팀원이 합류 가능하도록 — DDL·변수·비용·매니지먼트 모두 분리.
+
+- DDL·struct 분리 : `code/ddl/*.sql` 단일 진실원, 스키마 변경 = git diff
+- Compaction·Expire 변수 분리 : target/min/max·retention 하드코딩 X → 함수 인자
+- 비용·권한 가드 : Athena workgroup 5GB scan cutoff / IAM 최소 권한 / Terraform 자동화 (Phase 1.5)
+- 장 마감 후 매니지먼트 : Compaction 평일 18:00 + Expire 일요일 19:00 — 적재와 시간 분리
+
+**시각자료**: 표 — 노력 / 어디에 / 효과.
+
+**Speaker Note:**
+평가 4 축 중 협업·지속가능성 축에 정면으로 답하는 슬라이드입니다.
+DDL 은 .sql 파일이 단일 진실원입니다. 스키마 변경은 git diff 로 추적되고, code review 의 대상이 됩니다.
+Compaction 의 target 384MB, Expire 의 retention 30일 같은 숫자가 코드 안에 하드코딩되어 있지 않습니다. 함수 인자로 분리되어서 테이블마다 다른 값을 줄 수 있고, 변경할 때 한 곳만 보면 됩니다.
+비용과 권한은 가드를 걸었습니다. Athena workgroup 에 쿼리당 5GB scan cutoff, IAM 은 단일 버킷·단일 DB·단일 workgroup 으로 최소 권한입니다. Terraform 자동화는 Phase 1.5 로, 지금은 aws_initial_setup.sh bash 스크립트로 셋업합니다.
+매니지먼트 job 은 적재와 시간대를 분리했습니다. Compaction 평일 18:00, Expire 일요일 19:00.
+"강결합 회피" 가 핵심 컨벤션입니다. 인프라 컴포넌트 간 직접 의존을 피하고, 표준 인터페이스 — Kafka topic, S3 경로, Glue 카탈로그 — 로만 통신합니다.
+
+---
+
+## 29. AI 활용 방법론 — brainstorm → plan → 작은 커밋
+
+> Claude Code superpowers 로 모든 기능을 brainstorm → spec → plan → 작은 커밋 으로 진행.
+
+- 모든 새 기능 : `brainstorming` 스킬로 design spec → `writing-plans` 로 plan → `executing-plans`
+- 작은 커밋 : task 별 1 커밋, Conventional Commits, 변경 단위를 잘게 분리
+- 결정 기록 : `docs/superpowers/specs/` 의 설계 문서 = 의사결정 근거 (ADR 정식화는 Phase 1.5)
+- 효과 : 6 개월 후 결정 근거를 git log + design spec 으로 재현
+
+**시각자료**: 워크플로 그림 — idea → brainstorm → spec → plan → small commits → review → done.
+
+**Speaker Note:**
+AI 활용 방법론은 한 가지 원칙입니다. 절대 코드부터 짜지 않습니다.
+모든 새 기능은 먼저 brainstorming 스킬로 design spec 을 만들고, 그 다음 writing-plans 로 실행 plan 을 만들고, 마지막에 executing-plans 로 task 별 작은 커밋을 만듭니다.
+이 발표 자료 자체도 같은 흐름으로 만들어졌습니다. design spec 한 장, plan 한 장, 그 다음 슬라이드 1 장씩 작성.
+작은 커밋이 중요합니다. 변경 단위를 잘게 끊고 Conventional Commits 컨벤션을 따릅니다. git log 가 그대로 결정 기록이 됩니다.
+의사결정 기록은 docs/superpowers/specs 의 설계 문서가 담당합니다. DDL 을 왜 Athena 로 택했는지 같은 핵심 결정이 spec 과 핸드오프 문서에 남아 있습니다. ADR 로 정식화하는 건 Phase 1.5 항목입니다.
+6 개월 후 합류한 팀원이 git log 와 docs/superpowers/specs 만 봐도 의사결정 흐름을 재현할 수 있습니다.
+
+---
+
+## 30. 아쉬운 점 / 부족한 점 / 궁금한 점
+
+> 솔직한 한계 — 데이터 퀄리티 자동화 / 종목 수 3 종 / 단일 환경 → cross-region.
+
+- 데이터 퀄리티 자동화 부족 : Great Expectations / Soda 미도입
+- 종목 수 3 종 : 데모용 — Phase 1.5 에 KOSPI200 확장 필요
+- Single region : DR (Disaster Recovery) 시나리오 미설계
+- 궁금한 점 : 동시 종목 수 1000 → 5000 으로 가면 Kafka partition 수를 어떻게 재조정?
+
+**시각자료**: 4 박스 — 각각 짧은 카드.
+
+**Speaker Note:**
+부족한 점을 솔직하게 공유합니다.
+첫째, 데이터 퀄리티 자동화. 헬스 쿼리 4 종과 비즈니스 카운트 로그로 잡고는 있지만, Great Expectations 나 Soda 같은 정식 프레임워크는 미도입입니다.
+둘째, 종목 수. Phase 1 은 데모 목적으로 3 종목만 구독합니다. KOSPI200 확장은 Phase 1.5 입니다.
+셋째, Single region. ap-northeast-2 한 곳만 씁니다. 한국 서비스라 합리적이지만 DR 시나리오는 설계되어 있지 않습니다.
+궁금한 점도 공유합니다. 동시 구독 종목이 1000 에서 5000 으로 늘어나면 Kafka partition 수를 어떻게 재조정해야 할지, 그리고 partition 수 변경 시 기존 메시지 순서가 어떻게 영향받는지가 가장 큰 미해결 질문입니다.
+
+---
