@@ -48,6 +48,7 @@ services:
       test: ["CMD-SHELL", "KAFKA_JMX_OPTS= kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
       interval: 10s
       retries: 10
+      start_period: 30s
 
   kafka-jmx-exporter:
     image: bitnamilegacy/jmx-exporter:0.20.0

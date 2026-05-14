@@ -1,7 +1,8 @@
 """Kafka publisher — symbol partition key + JSON serialize.
 
-aiokafka 의 producer config (acks=all, enable_idempotence=True, retries=10,
-linger_ms=50, compression_type=snappy) 는 main.py 에서 주입.
+aiokafka 의 producer config (acks=all, enable_idempotence=True, linger_ms=50,
+compression_type=snappy, metadata_max_age_ms=30000, request_timeout_ms=30000,
+retry_backoff_ms=500) 는 main.py 에서 주입.
 """
 from __future__ import annotations
 

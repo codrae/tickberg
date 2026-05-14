@@ -78,6 +78,12 @@ async def main() -> None:
             enable_idempotence=True,
             linger_ms=50,
             compression_type="snappy",
+            # broker 재시작 후 stale metadata 윈도우 단축 (기본 5분 → 30초).
+            # stuck 케이스 자체의 근본 방지는 아님 (aiokafka 내부 reconnect 한계) —
+            # self-healing guard (연속 실패 시 client 재생성) 는 Phase 2.
+            request_timeout_ms=30000,
+            retry_backoff_ms=500,
+            metadata_max_age_ms=30000,
         )
         await producer.start()
         try:
