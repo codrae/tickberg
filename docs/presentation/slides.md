@@ -233,20 +233,21 @@ partition key 는 symbol 입니다. 같은 종목의 tick 은 항상 같은 파�
 
 ## 12. Kafka 튜닝값 — 운영 시 고민한 4가지
 
-> acks=all / linger.ms=20 / compression=lz4 / max.request.size — 손실·지연·처리량 균형.
+> acks=all + idempotence / linger.ms=50 / compression=snappy / retries=10 — 손실·중복·지연·장애 균형.
 
-- `acks=all` : 리더+모든 ISR 응답 → 메시지 손실 최소화 (RF=1 이라도 폴리시 일관성)
-- `linger.ms=20` : 20ms 묶음 전송 → throughput 와 지연 균형
-- `compression.type=lz4` : 네트워크·디스크 절감, CPU 부하 최소
-- `max.request.size=2MB` : H0STCNT0 페이로드 여유 (실제 평균 ~1KB)
+- `acks=all` + `enable_idempotence=True` : 메시지 손실 + 재시도 중복 동시 차단 (exactly-once 지향)
+- `linger.ms=50` : 50ms 묶음 전송 → throughput 와 지연 균형
+- `compression.type=snappy` : 네트워크·디스크 절감, CPU 부하 낮음
+- `retries=10` : 일시 네트워크 장애 시 자동 재시도 (idempotence 와 함께 중복 없이 안전)
 
 **시각자료**: 4행 표 — 키 / 값 / 근거 / Trade-off.
 
 **Speaker Note:**
-Producer 튜닝값 4가지입니다.
-acks=all 입니다. RF 가 1 이라 사실상 단일 리더지만 폴리시 일관성을 위해 all 로 둡니다. Phase 2 에서 RF=3 으로 갈 때 코드 변경 없이 안전성이 올라갑니다.
-linger.ms 는 20ms 입니다. 0 으로 두면 메시지가 들어오자마자 보내서 throughput 이 떨어지고, 너무 길게 두면 지연이 늘어납니다. 20ms 가 분당 tick 수 기준으로 균형점이었습니다.
-compression 은 lz4 입니다. snappy 보다 압축률이 좋고, gzip 보다 CPU 부하가 적습니다. 네트워크와 S3 비용 둘 다에 효과가 있습니다.
-max.request.size 는 2MB 입니다. 실제 H0STCNT0 페이로드 평균이 1KB 정도라 충분히 여유가 있고, 한 번에 묶이는 batch 가 커도 막히지 않습니다.
+Producer 튜닝값 4가지입니다. aiokafka 기준입니다.
+첫째, acks=all 과 enable_idempotence 를 같이 켰습니다. acks=all 은 메시지 손실을 막고, idempotence 는 재시도 시 중복을 막습니다. 둘을 같이 켜야 exactly-once 에 가까워집니다.
+둘째, linger.ms 는 50ms 입니다. 0 으로 두면 메시지가 들어오자마자 보내서 throughput 이 떨어지고, 너무 길게 두면 지연이 늘어납니다. 50ms 가 분당 tick 수 기준으로 균형점이었습니다.
+셋째, compression 은 snappy 입니다. CPU 부하가 낮으면서 네트워크와 S3 비용을 둘 다 줄여줍니다.
+넷째, retries 는 10 입니다. 일시적인 네트워크 장애가 나도 자동으로 재시도합니다. idempotence 가 켜져 있어서 재시도해도 중복이 안 생깁니다.
+RF 가 1 이라 acks=all 이 사실상 단일 리더 응답이지만, Phase 2 에서 RF=3 으로 갈 때 코드 변경 없이 안전성이 올라갑니다.
 
 ---
