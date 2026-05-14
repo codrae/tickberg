@@ -256,8 +256,7 @@ git commit -m "docs(presentation): add problem / domain / data source slides (02
 
 - ① Bronze = Parquet (Iceberg X) — streaming snapshot/manifest 갱신 오버헤드 차단
 - ② Silver/Gold = Iceberg — MERGE, OVERWRITE 원자성, Time-travel 세 가치
-- ③ AWS 단일 환경 — Glue Catalog 일원화, 로컬 MinIO/Hive 미사용
-- ④ DDL = Athena SQL — Spark cold start 회피, `.sql` 단일 진실원
+- ③ AWS 단일 환경 + ④ DDL = Athena SQL — Glue Catalog 일원화, `.sql` 단일 진실원
 - ⑤ dbt·자동매매 = Phase 2 — Phase 1 은 Lakehouse + 운영 가시성에 집중
 
 **시각자료**: 5행 표 — 결정 / 근거 / Trade-off 명시.
@@ -530,20 +529,22 @@ git commit -m "docs(presentation): add Kafka topic + tuning slides (11-12)"
 ````markdown
 ## 13. Airflow DAG 설계 — 장 시간 vs 장 마감 후 분리
 
-> 5 개 DAG, 시간대 분리 — 장 시간 = 분당 트리거, 장 마감 후 = 매니지먼트.
+> 6 개 DAG, 시간대 분리 — 장 시간 = 분당 트리거, 장 마감 후·주말 = 매니지먼트.
 
-- 장 시간 (09–16 KST 평일) : `bronze_to_silver_kis` */10 / `silver_to_gold_vwap` */10
-- 장 시작 전 (04:00) : `dim_symbol_daily` (KIS 종목 마스터 MERGE)
-- 장 시작 전 (06:00 평일) : `dart_ingest_daily` (전일 공시 일배치)
-- 장 마감 후 (18:00 평일) : `iceberg_compaction` (Silver/Gold rewrite_data_files)
+- 장 시간 (09–16 KST 평일) : `bronze_to_silver_kis` / `silver_to_gold_vwap` (*/10)
+- 장 시작 전 : `dim_symbol_daily` 04:00 / `dart_ingest_daily` 06:00 평일
+- 장 마감 후 (평일 18:00) : `iceberg_compaction` (Silver/Gold rewrite_data_files)
+- 주 1회 (일요일 19:00) : `expire_snapshots` (Silver/Gold snapshot 정리)
 
-**시각자료**: DAG 그래프 한 컷 — 시간 축 가로, DAG 5개 세로 배치.
+**시각자료**: DAG 그래프 한 컷 — 시간 축 가로, DAG 6개 세로 배치.
 
 **Speaker Note:**
-DAG 는 5개입니다. 그리고 핵심 원칙은 장 시간 자원과 장 마감 후 자원을 분리하는 것입니다.
+DAG 는 6개입니다. 핵심 원칙은 장 시간 자원과 장 마감 후·주말 자원을 분리하는 것입니다.
 장 시간 09–16 KST 평일에는 두 DAG 가 10분 간격으로 돕니다. Bronze 를 Silver 로 MERGE 하는 DAG 와 Silver 를 Gold 분봉으로 OVERWRITE 하는 DAG 입니다. 10분 간격으로 잡은 이유는 micro-batch 1분과 BI 새로고침 주기 사이 균형점입니다.
 장 시작 전 두 DAG 가 있습니다. 04:00 에 KIS REST 종목 마스터를 MERGE 하고, 06:00 평일에 전일 DART 공시를 일배치로 끌어옵니다. 장 시간 자원과 충돌하지 않습니다.
-장 마감 후 18:00 평일에 Iceberg Compaction 이 돕니다. rewrite_data_files 로 Silver 와 Gold 의 작은 파일을 384MB 단위로 합칩니다. Spark cluster 가 가장 한가한 시간이라 안전합니다.
+장 마감 후 평일 18:00 에 Iceberg Compaction 이 돕니다. rewrite_data_files 로 Silver 와 Gold 의 작은 파일을 384MB 단위로 합칩니다.
+주말에는 일요일 19:00 에 expire_snapshots 가 돕니다. 30일 이전 snapshot 을 정리합니다. Compaction 과 Expire 는 짝입니다.
+Spark cluster 가 가장 한가한 시간대를 골라서 매니지먼트를 배치한 게 핵심입니다.
 
 ---
 
@@ -1075,8 +1076,7 @@ MSK 는 Kafka 처리량 100MB/s 또는 RF=3 이 필요한 시점에 검토합니
 
 - "왜 Kafka 인가? Kinesis 아니고?" → Phase 1 로컬 컴퓨트 정책, Phase 2 트래픽 시 MSK
 - "왜 Spark 인가? Glue Job 아니고?" → 비용·디버깅 단순성, 100x 시 EMR Serverless 비교
-- "왜 dbt 안 썼나?" → Phase 1 은 PySpark + SQL DDL 직접, dbt = Phase 2
-- "Iceberg v2 인 이유?" → 행 단위 delete 지원, Athena 도 v2 만 지원
+- "왜 dbt 안 썼나? / Iceberg v2 인 이유?" → dbt = Phase 2 / v2 는 행 단위 delete, Athena 도 v2 만 지원
 - "장 마감 후엔 무엇이 도나?" → Compaction 평일 18:00 / Expire 일요일 19:00 (dim_symbol·DART 는 장 시작 전 배치)
 
 **시각자료**: 5 행 표 + 추가 3 종은 핸드오프 §11 참조.
