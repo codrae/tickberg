@@ -96,16 +96,12 @@ def main() -> None:
     args = p.parse_args()
 
     bucket = os.environ.get("S3_BUCKET", "tickberg-lakehouse")
-    # session.timeZone=Asia/Seoul — streaming·gold job 과 일치. trade_ts_kst 는
-    # KST 벽시계 표현이므로 모든 stage 가 동일 tz 로 동작해야 _enrich 의
-    # trade_uid (HHmmss) · trade_ts_utc 변환이 일관됨.
-    spark = (
-        SparkSession.builder.appName("bronze_to_silver_kis_tick")
-        .config("spark.sql.session.timeZone", "Asia/Seoul")
-        .getOrCreate()
-    )
-    spark.sparkContext.setLogLevel("WARN")
-    spark.sparkContext.setLocalProperty("spark.scheduler.pool", "batch_pool")
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from _spark import build_batch_session
+
+    spark = build_batch_session("bronze_to_silver_kis_tick")
 
     bronze = _read_bronze_window(spark, bucket=bucket, window_minutes=args.window_minutes)
     n = merge_bronze_into_silver(

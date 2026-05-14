@@ -87,16 +87,13 @@ def main() -> None:
         datetime.fromisoformat(args.hour) if args.hour else _current_hour_kst()
     ).replace(minute=0, second=0, microsecond=0)
 
-    # session.timeZone=Asia/Seoul — streaming job 과 일치 필수. trade_ts_kst 는
-    # KST 벽시계를 표현하므로 hour 필터·date_trunc 가 KST 기준으로 동작해야 함.
-    # 미설정(UTC default) 시 hour 필터가 9시간 어긋나 0 rows.
-    spark = (
-        SparkSession.builder.appName("silver_to_gold_vwap")
-        .config("spark.sql.session.timeZone", "Asia/Seoul")
-        .getOrCreate()
-    )
-    spark.sparkContext.setLogLevel("WARN")
-    spark.sparkContext.setLocalProperty("spark.scheduler.pool", "batch_pool")
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from _spark import build_batch_session
+
+    spark = build_batch_session("silver_to_gold_vwap")
+    # hour partition 만 OVERWRITE — 다른 hour 파티션 보존.
     spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
 
     # hour 필터는 compute_vwap_for_hour 내부에서 적용 — 여기서 중복 X.

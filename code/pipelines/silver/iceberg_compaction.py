@@ -50,9 +50,12 @@ def main() -> None:
     p.add_argument("--target-mb", type=int, default=384)
     args = p.parse_args()
 
-    spark = SparkSession.builder.appName("iceberg_compaction").getOrCreate()
-    spark.sparkContext.setLogLevel("WARN")
-    spark.sparkContext.setLocalProperty("spark.scheduler.pool", "batch_pool")
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from _spark import build_batch_session
+
+    spark = build_batch_session("iceberg_compaction")
     target = args.target_mb * 1024 * 1024
 
     for t in args.tables:

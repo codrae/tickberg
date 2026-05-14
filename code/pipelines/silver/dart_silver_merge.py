@@ -102,9 +102,12 @@ def main() -> None:
     args = p.parse_args()
 
     bucket = os.environ.get("S3_BUCKET", "tickberg-lakehouse")
-    spark = SparkSession.builder.appName("dart_silver_merge").getOrCreate()
-    spark.sparkContext.setLogLevel("WARN")
-    spark.sparkContext.setLocalProperty("spark.scheduler.pool", "batch_pool")
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from _spark import build_batch_session
+
+    spark = build_batch_session("dart_silver_merge")
 
     bronze = _read_bronze_window(spark, bucket=bucket, days_back=args.days_back)
     n = merge_dart_bronze_into_silver(

@@ -13,7 +13,7 @@ import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from pyspark.sql import Row, SparkSession
+from pyspark.sql import Row
 
 # sibling module — spark-submit 시 script directory 가 sys.path 에 포함됨.
 from dart_client import DartClient
@@ -33,8 +33,12 @@ def main() -> None:
     client = DartClient(api_key=os.environ["DART_API_KEY"])
     rows = client.fetch_disclosures(business_date=biz, stock_codes=symbols)
 
-    spark = SparkSession.builder.appName("dart_disclosure_ingest").getOrCreate()
-    spark.sparkContext.setLogLevel("WARN")
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from _spark import build_batch_session
+
+    spark = build_batch_session("dart_disclosure_ingest")
 
     if not rows:
         print(f"no DART rows for {biz}")
