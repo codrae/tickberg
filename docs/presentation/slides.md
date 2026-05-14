@@ -210,3 +210,43 @@ Gold 는 10컬럼 Iceberg 분봉입니다.
 Phase 2 에서 일 1억 tick 규모가 되면 이 결정을 다시 봐야 합니다. 윈도우 증분 OVERWRITE 로 갈 수도 있고, Flink streaming 으로 갈 수도 있습니다.
 
 ---
+
+## 11. Kafka topic·파티션 설계
+
+> `kis.tick.raw` 1 topic, partition key = symbol, 12 partitions, retention 7일.
+
+- Topic : `kis.tick.raw` (단일) — Bronze 외 다른 source 분리 시 별도 topic
+- Partitions : 12 — symbol 분포 + Spark Streaming 병렬도 균형
+- Partition key : symbol → 동일 symbol 순서 보장
+- Metadata 보존 : `kafka_partition`·`kafka_offset` 컬럼 Bronze 에 저장 → 장애 시 추적
+
+**시각자료**: 토픽 설계도 — KIS Producer → Kafka topic (12 partitions) → Spark Streaming consumer.
+
+**Speaker Note:**
+Kafka 설계는 단순합니다.
+Topic 은 kis.tick.raw 하나입니다. DART 나 신용정보원은 Kafka 를 안 거치고 직접 S3 에 떨굽니다. 일배치라 Kafka 가 필요 없습니다.
+파티션은 12 개입니다. KOSPI200 종목 분포 + Spark Streaming consumer 병렬도 (executor 수) 두 가지를 보고 정했습니다.
+partition key 는 symbol 입니다. 같은 종목의 tick 은 항상 같은 파티션으로 가서 순서가 보장됩니다. VWAP 계산할 때 시간 순서가 어긋나면 OHLC 가 깨집니다.
+한 가지 강조하고 싶은 건 metadata 까지 Bronze 에 저장한다는 점입니다. kafka_partition 과 kafka_offset 을 컬럼으로 남겨 두면 "이 row 가 어느 파티션 어느 오프셋에서 왔는지" 가 그대로 추적됩니다. 장애 분석에 매우 유용합니다.
+
+---
+
+## 12. Kafka 튜닝값 — 운영 시 고민한 4가지
+
+> acks=all / linger.ms=20 / compression=lz4 / max.request.size — 손실·지연·처리량 균형.
+
+- `acks=all` : 리더+모든 ISR 응답 → 메시지 손실 최소화 (RF=1 이라도 폴리시 일관성)
+- `linger.ms=20` : 20ms 묶음 전송 → throughput 와 지연 균형
+- `compression.type=lz4` : 네트워크·디스크 절감, CPU 부하 최소
+- `max.request.size=2MB` : H0STCNT0 페이로드 여유 (실제 평균 ~1KB)
+
+**시각자료**: 4행 표 — 키 / 값 / 근거 / Trade-off.
+
+**Speaker Note:**
+Producer 튜닝값 4가지입니다.
+acks=all 입니다. RF 가 1 이라 사실상 단일 리더지만 폴리시 일관성을 위해 all 로 둡니다. Phase 2 에서 RF=3 으로 갈 때 코드 변경 없이 안전성이 올라갑니다.
+linger.ms 는 20ms 입니다. 0 으로 두면 메시지가 들어오자마자 보내서 throughput 이 떨어지고, 너무 길게 두면 지연이 늘어납니다. 20ms 가 분당 tick 수 기준으로 균형점이었습니다.
+compression 은 lz4 입니다. snappy 보다 압축률이 좋고, gzip 보다 CPU 부하가 적습니다. 네트워크와 S3 비용 둘 다에 효과가 있습니다.
+max.request.size 는 2MB 입니다. 실제 H0STCNT0 페이로드 평균이 1KB 정도라 충분히 여유가 있고, 한 번에 묶이는 batch 가 커도 막히지 않습니다.
+
+---
