@@ -921,45 +921,43 @@ Silver 의 COW write amplification 도 100x 에서 깨집니다. MERGE 시 parti
 
 ## 27. 예상 문제 ② — OOM / S3 네트워크 장애
 
-> Producer OOM / S3 일시 장애 — replay 가능 설계 + idempotent MERGE 가 안전망.
+> 어디서 데이터가 유실 가능한지 정확히 안다 — Kafka 이후는 replay, Kafka 이전은 알람.
 
-- Producer OOM : Kafka offset commit 전에 죽음 → 재기동 시 마지막 commit 부터 재처리
-- S3 PUT 일시 장애 : Spark Structured Streaming `_spark_metadata` 로 미완료 batch 재시도
-- Silver MERGE 멱등성 : 같은 trade_uid 가 두 번 들어와도 update → replay 안전
-- 가드레일 : Kafka retention 7 일 = replay 윈도우, AWS Budgets 월 $20 알람
+- Spark Bronze consumer OOM : Kafka offset checkpoint (S3) → 재기동 시 마지막 offset 부터 재개 (유실 0)
+- KIS Producer OOM : 라이브 WebSocket 구간이라 다운타임 tick 유실 → `restart=unless-stopped` + `kis_ws_connected` 알람
+- S3 PUT 일시 장애 : Spark Structured Streaming checkpoint 가 미완료 batch 다음 trigger 에 재시도
+- 가드레일 : Kafka retention 7일 = consumer replay 윈도우 / AWS Budgets 월 $20 알람
 
-**시각자료**: failure mode 표 — 장애 / 영향 / 복구 / 안전망.
+**시각자료**: failure mode 표 — 장애 지점 / 영향 / 복구 / 안전망 (Kafka 전후 구분).
 
 **Speaker Note:**
-운영 중 가장 흔한 장애 두 가지를 다룹니다.
-첫째, Producer OOM. Kafka offset commit 전에 죽으면 재기동 시 마지막 commit 오프셋부터 다시 읽습니다. 일부 메시지가 중복될 수 있지만, Silver MERGE 의 trade_uid 가 멱등이라 안전합니다.
-둘째, S3 PUT 일시 장애. Spark Structured Streaming 은 _spark_metadata 디렉토리로 미완료 batch 를 추적합니다. 다음 trigger 에서 자동 재시도됩니다.
-이 두 장애 모두 "replay 가능 설계 + MERGE 멱등성" 으로 풀립니다.
-Kafka retention 을 7 일로 잡은 이유도 이겁니다. 주말 전체를 보존 윈도우로 두고, 월요일 아침에 발견한 이슈를 금요일까지 replay 할 수 있습니다.
-AWS 비용 가드레일도 별도입니다. Budgets 로 월 $20 알람이 걸려 있어서 비용 폭주는 알람으로 인지합니다.
+운영 중 장애를 다룰 때 핵심은 어디서 데이터가 유실될 수 있는지를 정확히 아는 것입니다.
+Kafka 이후 구간은 안전합니다. Spark Bronze consumer 가 OOM 으로 죽어도 Kafka offset checkpoint 가 S3 에 있어서, 재기동하면 마지막 offset 부터 재개합니다. 유실이 0 입니다. 일부 메시지가 중복돼도 Silver MERGE 의 trade_uid 가 멱등이라 안전합니다.
+Kafka 이전 구간은 다릅니다. KIS Producer 가 OOM 으로 죽으면 KIS WebSocket 은 라이브 피드라 그 다운타임 동안의 tick 은 유실됩니다. 솔직히 인정하는 한계입니다. 대응은 두 가지인데, 컨테이너를 restart=unless-stopped 로 띄워 자동 재기동하고, kis_ws_connected 메트릭으로 5분 안에 알람을 받습니다.
+S3 PUT 이 일시적으로 장애가 나도 Spark Structured Streaming 의 checkpoint 가 미완료 batch 를 다음 trigger 에서 재시도합니다.
+Kafka retention 을 7일로 둔 이유가 여기 있습니다. consumer replay 윈도우입니다. 월요일 아침에 발견한 이슈를 금요일까지 거슬러 재처리할 수 있습니다.
+비용 가드레일도 별도입니다. AWS Budgets 로 월 20달러 알람이 걸려 있습니다.
 
 ---
 
 ## 28. 코드·인프라 노력 — 강결합 회피, 분리, 자동화
 
-> 6 개월 후 합류한 팀원이 합류 가능하도록 — DDL / Compaction / 비용·권한 모두 분리.
+> 6 개월 후 합류한 팀원이 합류 가능하도록 — DDL·변수·비용·매니지먼트 모두 분리.
 
-- DDL 분리 : `code/ddl/*.sql` 단일 진실원, struct/DDL 변경 = git diff
-- Compaction 변수 분리 : target/min/max 하드코딩 X → 함수 인자
-- Terraform : S3 / Glue DB / Athena workgroup 자동화 (Phase 1.5)
-- Athena workgroup 제한 : 쿼리당 5GB scan cutoff, 비용 가드
-- 장 마감 후 매니지먼트 : 모든 매니지먼트 job 18:00 KST 평일 이후
-- 컨테이너 스크립트 1개 : `infra/docker/docker-compose.yml` 단일
+- DDL·struct 분리 : `code/ddl/*.sql` 단일 진실원, 스키마 변경 = git diff
+- Compaction·Expire 변수 분리 : target/min/max·retention 하드코딩 X → 함수 인자
+- 비용·권한 가드 : Athena workgroup 5GB scan cutoff / IAM 최소 권한 / Terraform 자동화 (Phase 1.5)
+- 장 마감 후 매니지먼트 : Compaction 평일 18:00 + Expire 일요일 19:00 — 적재와 시간 분리
 
-**시각자료**: 7행 표 — 노력 / 어디에 / 효과.
+**시각자료**: 표 — 노력 / 어디에 / 효과.
 
 **Speaker Note:**
 평가 4 축 중 협업·지속가능성 축에 정면으로 답하는 슬라이드입니다.
 DDL 은 .sql 파일이 단일 진실원입니다. 스키마 변경은 git diff 로 추적되고, code review 의 대상이 됩니다.
-Compaction 의 target 384MB 같은 숫자가 코드 안에 하드코딩되어 있지 않습니다. 함수 인자로 분리되어서 Silver 와 Gold 가 다른 값을 줄 수 있고, 변경할 때 한 곳만 보면 됩니다.
-Terraform 은 Phase 1.5 로 잡혀 있습니다. Phase 1 은 aws_initial_setup.sh 같은 bash 스크립트로 충분히 자동화되어 있고, 6 개월 후 재배포 시 terraform 으로 전환할 예정입니다.
-Athena workgroup 에 쿼리당 5GB scan cutoff 을 걸어 두었습니다. 누가 실수로 풀스캔 쿼리를 던져도 비용이 폭주하지 않습니다.
-"강결합 회피" 가 핵심 컨벤션입니다. 인프라 컴포넌트 간 직접 의존을 피하고, 표준 인터페이스 (Kafka topic, S3 경로, Glue 카탈로그) 로만 통신합니다.
+Compaction 의 target 384MB, Expire 의 retention 30일 같은 숫자가 코드 안에 하드코딩되어 있지 않습니다. 함수 인자로 분리되어서 테이블마다 다른 값을 줄 수 있고, 변경할 때 한 곳만 보면 됩니다.
+비용과 권한은 가드를 걸었습니다. Athena workgroup 에 쿼리당 5GB scan cutoff, IAM 은 단일 버킷·단일 DB·단일 workgroup 으로 최소 권한입니다. Terraform 자동화는 Phase 1.5 로, 지금은 aws_initial_setup.sh bash 스크립트로 셋업합니다.
+매니지먼트 job 은 적재와 시간대를 분리했습니다. Compaction 평일 18:00, Expire 일요일 19:00.
+"강결합 회피" 가 핵심 컨벤션입니다. 인프라 컴포넌트 간 직접 의존을 피하고, 표준 인터페이스 — Kafka topic, S3 경로, Glue 카탈로그 — 로만 통신합니다.
 
 ---
 
@@ -968,9 +966,9 @@ Athena workgroup 에 쿼리당 5GB scan cutoff 을 걸어 두었습니다. 누�
 > Claude Code superpowers 로 모든 기능을 brainstorm → spec → plan → 작은 커밋 으로 진행.
 
 - 모든 새 기능 : `brainstorming` 스킬로 design spec → `writing-plans` 로 plan → `executing-plans`
-- 작은 커밋 : task 별 1 커밋, Conventional Commits, 평균 50–200 line/commit
-- ADR 0001 : DDL 실행 전략 (Athena vs Spark) 결정 문서화
-- 효과 : 6 개월 후 결정 근거를 git log + docs/superpowers/specs 로 재현
+- 작은 커밋 : task 별 1 커밋, Conventional Commits, 변경 단위를 잘게 분리
+- 결정 기록 : `docs/superpowers/specs/` 의 설계 문서 = 의사결정 근거 (ADR 정식화는 Phase 1.5)
+- 효과 : 6 개월 후 결정 근거를 git log + design spec 으로 재현
 
 **시각자료**: 워크플로 그림 — idea → brainstorm → spec → plan → small commits → review → done.
 
@@ -978,8 +976,8 @@ Athena workgroup 에 쿼리당 5GB scan cutoff 을 걸어 두었습니다. 누�
 AI 활용 방법론은 한 가지 원칙입니다. 절대 코드부터 짜지 않습니다.
 모든 새 기능은 먼저 brainstorming 스킬로 design spec 을 만들고, 그 다음 writing-plans 로 실행 plan 을 만들고, 마지막에 executing-plans 로 task 별 작은 커밋을 만듭니다.
 이 발표 자료 자체도 같은 흐름으로 만들어졌습니다. design spec 한 장, plan 한 장, 그 다음 슬라이드 1 장씩 작성.
-작은 커밋이 중요합니다. 평균 50–200 라인 단위로 끊고 Conventional Commits 컨벤션을 따릅니다. git log 가 그대로 결정 기록이 됩니다.
-ADR 도 적극 활용합니다. 0001 은 DDL 실행 전략 결정 — 왜 Athena 를 택했고 Spark 를 안 썼는지가 한 페이지 문서로 남아 있습니다.
+작은 커밋이 중요합니다. 변경 단위를 잘게 끊고 Conventional Commits 컨벤션을 따릅니다. git log 가 그대로 결정 기록이 됩니다.
+의사결정 기록은 docs/superpowers/specs 의 설계 문서가 담당합니다. DDL 을 왜 Athena 로 택했는지 같은 핵심 결정이 spec 과 핸드오프 문서에 남아 있습니다. ADR 로 정식화하는 건 Phase 1.5 항목입니다.
 6 개월 후 합류한 팀원이 git log 와 docs/superpowers/specs 만 봐도 의사결정 흐름을 재현할 수 있습니다.
 
 ---
