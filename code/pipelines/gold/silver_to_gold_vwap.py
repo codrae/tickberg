@@ -8,23 +8,40 @@ import argparse
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
 KST = ZoneInfo("Asia/Seoul")
 
 
+def _hour_filter(hour_start: datetime) -> Column:
+    """KST 시각 컴포넌트(year/month/day/hour) 추출 비교로 hour 파티션 필터.
+
+    `trade_ts_kst` 는 Iceberg 카탈로그에 따라 Spark 타입이 갈린다 — Athena DDL
+    로 만든 프로덕션 테이블은 `timestamp_ntz`, Spark `CREATE TABLE` 로 만든
+    테스트 fixture 는 `timestamp`(TZ). `F.lit(datetime)`(timestamp TZ) 이나
+    SQL `timestamp '...'` 리터럴은 둘 중 한쪽 타입과만 정확히 비교돼 다른 쪽은
+    0 rows. year/month/day/hour 추출 비교는 두 타입 모두에서 동일하게 동작
+    (session.timeZone=Asia/Seoul 전제 — main() 에서 설정).
+    """
+    c = F.col("trade_ts_kst")
+    return (
+        (F.year(c) == hour_start.year)
+        & (F.month(c) == hour_start.month)
+        & (F.dayofmonth(c) == hour_start.day)
+        & (F.hour(c) == hour_start.hour)
+    )
+
+
 def compute_vwap_for_hour(
     spark: SparkSession, *, silver_df: DataFrame, hour_kst: datetime
 ) -> DataFrame:
     hour_start = hour_kst.replace(minute=0, second=0, microsecond=0)
-    hour_end = hour_start + timedelta(hours=1)
 
     df = (
         silver_df
-        .where((F.col("trade_ts_kst") >= F.lit(hour_start))
-               & (F.col("trade_ts_kst") < F.lit(hour_end)))
+        .where(_hour_filter(hour_start))
         .withColumn("ts_minute", F.date_trunc("minute", "trade_ts_kst"))
     )
 
@@ -70,16 +87,19 @@ def main() -> None:
         datetime.fromisoformat(args.hour) if args.hour else _current_hour_kst()
     ).replace(minute=0, second=0, microsecond=0)
 
-    spark = SparkSession.builder.appName("silver_to_gold_vwap").getOrCreate()
+    # session.timeZone=Asia/Seoul — streaming job 과 일치 필수. trade_ts_kst 는
+    # KST 벽시계를 표현하므로 hour 필터·date_trunc 가 KST 기준으로 동작해야 함.
+    # 미설정(UTC default) 시 hour 필터가 9시간 어긋나 0 rows.
+    spark = (
+        SparkSession.builder.appName("silver_to_gold_vwap")
+        .config("spark.sql.session.timeZone", "Asia/Seoul")
+        .getOrCreate()
+    )
     spark.sparkContext.setLogLevel("WARN")
     spark.sparkContext.setLocalProperty("spark.scheduler.pool", "batch_pool")
     spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
 
-    silver = (
-        spark.table(args.silver_table)
-        .where((F.col("trade_ts_kst") >= F.lit(hour))
-               & (F.col("trade_ts_kst") < F.lit(hour + timedelta(hours=1))))
-    )
+    silver = spark.table(args.silver_table).where(_hour_filter(hour))
     out = compute_vwap_for_hour(spark, silver_df=silver, hour_kst=hour)
     out.writeTo(args.gold_table).overwritePartitions()
     print(f"gold overwrite hour={hour.isoformat()} rows={out.count()}")

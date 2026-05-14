@@ -23,7 +23,7 @@ default_args = {
 with DAG(
     dag_id="silver_to_gold_vwap",
     default_args=default_args,
-    schedule="*/10 9-16 * * MON-FRI",
+    schedule="*/30 9-16 * * MON-FRI",
     start_date=datetime(2026, 5, 11, 9, 0),
     catchup=False,
     max_active_runs=1,
@@ -37,7 +37,7 @@ with DAG(
         failed_states=["failed", "skipped"],
         mode="reschedule",
         poke_interval=30,
-        timeout=60 * 15,  # bronze 실제 소요 ~8min + 안전 마진. 이전 5min 은 timeout 빈발.
+        timeout=60 * 25,  # bronze→silver ~20min (small-files + 1-core) + 5min 마진.
     )
 
     overwrite_gold = BashOperator(

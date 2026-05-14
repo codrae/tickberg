@@ -7,9 +7,13 @@ from __future__ import annotations
 
 import argparse
 import os
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
+
+KST = ZoneInfo("Asia/Seoul")
 
 
 def _enrich(bronze_df: DataFrame) -> DataFrame:
@@ -64,15 +68,20 @@ def merge_bronze_into_silver(
 
 
 def _read_bronze_window(spark: SparkSession, bucket: str, window_minutes: int) -> DataFrame:
-    """Read recent N minutes of Bronze.
+    """Read recent N minutes of Bronze with dt partition pruning.
 
-    Bronze 는 Parquet (non-Iceberg) 라 Iceberg-only `glue` 카탈로그로
-    접근 불가. S3 path 로 직접 읽고 Hive-style partition (dt=, hr=) 자동
-    discovery. 정확한 ingest_ts 필터는 read 후 적용.
+    Bronze 는 Parquet (dt, hr) 파티션 — Iceberg-only `glue` 카탈로그로 접근
+    불가하여 S3 path 로 직접 read. `ingest_ts` 만으로 필터하면 partition
+    컬럼이 아니라 pruning 이 안 되어 Bronze 전체 history (수일치 small-files)
+    를 매번 listing/read → O(전체 history). 먼저 `dt` 파티션 컬럼으로 좁힌 뒤
+    `ingest_ts` 정밀 필터를 적용한다. window 가 날짜 경계를 넘거나 late
+    arrival 을 포착하도록 1일 buffer 를 둔다.
     """
+    lookback_date = (datetime.now(KST) - timedelta(minutes=window_minutes, days=1)).date()
     bronze_path = f"s3a://{bucket}/bronze/kis_tick_raw/"
     return (
         spark.read.parquet(bronze_path)
+        .where(F.col("dt") >= F.lit(lookback_date))
         .where(
             F.col("ingest_ts")
             >= F.current_timestamp() - F.expr(f"INTERVAL {window_minutes} MINUTES")
@@ -87,7 +96,14 @@ def main() -> None:
     args = p.parse_args()
 
     bucket = os.environ.get("S3_BUCKET", "tickberg-lakehouse")
-    spark = SparkSession.builder.appName("bronze_to_silver_kis_tick").getOrCreate()
+    # session.timeZone=Asia/Seoul — streaming·gold job 과 일치. trade_ts_kst 는
+    # KST 벽시계 표현이므로 모든 stage 가 동일 tz 로 동작해야 _enrich 의
+    # trade_uid (HHmmss) · trade_ts_utc 변환이 일관됨.
+    spark = (
+        SparkSession.builder.appName("bronze_to_silver_kis_tick")
+        .config("spark.sql.session.timeZone", "Asia/Seoul")
+        .getOrCreate()
+    )
     spark.sparkContext.setLogLevel("WARN")
     spark.sparkContext.setLocalProperty("spark.scheduler.pool", "batch_pool")
 

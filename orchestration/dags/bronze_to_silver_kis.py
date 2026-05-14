@@ -1,4 +1,9 @@
-"""Bronze → Silver 5-min MERGE during market hours (KST)."""
+"""Bronze → Silver MERGE during market hours (KST).
+
+schedule */30: bronze→silver job 이 Bronze small-files 누적 + 1-core 자원
+제약으로 ~20min 소요 → */10 은 backlog 영구 적체. */30 으로 10min margin.
+근본 수정 (Bronze compaction / hr-level pruning) 은 Phase 2.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -22,7 +27,7 @@ with DAG(
     dag_id="bronze_to_silver_kis",
     default_args=default_args,
     description="Merge recent Bronze KIS ticks into Silver (dedup by trade_uid)",
-    schedule="*/10 9-16 * * MON-FRI",
+    schedule="*/30 9-16 * * MON-FRI",
     start_date=datetime(2026, 5, 11, 9, 0),
     catchup=False,
     max_active_runs=1,
