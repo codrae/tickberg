@@ -232,30 +232,41 @@ partition key 는 symbol 입니다. 같은 종목의 tick 은 항상 같은 파�
 
 ## 12. Kafka 튜닝값 — 운영 시 고민한 4가지
 
-> acks=all + idempotence / linger.ms=50 / compression=snappy / retries=10 — 손실·중복·지연·장애 균형.
+> acks=all + idempotence / linger.ms=50 / compression=snappy / metadata_max_age=30s — 손실·중복·지연·장애 균형.
 
 - `acks=all` + `enable_idempotence=True` : 메시지 손실 + 재시도 중복 동시 차단 (exactly-once 지향)
 - `linger.ms=50` : 50ms 묶음 전송 → throughput 와 지연 균형
 - `compression.type=snappy` : 네트워크·디스크 절감, CPU 부하 낮음
-- `retries=10` : 일시 네트워크 장애 시 자동 재시도 (idempotence 와 함께 중복 없이 안전)
+- `metadata_max_age_ms=30000` : broker 재시작 후 stale metadata 윈도우 단축 (기본 5분→30초) — 5/14 운영 중 Kafka 재시작 → producer stuck 사고 후 보강
 
-**시각자료**: 4행 표 — 키 / 값 / 근거 / Trade-off.
+```python
+# infra/docker/kis-producer/main.py
+producer = AIOKafkaProducer(
+    bootstrap_servers=bootstrap,
+    acks="all", enable_idempotence=True,
+    linger_ms=50, compression_type="snappy",
+    request_timeout_ms=30000, retry_backoff_ms=500,
+    metadata_max_age_ms=30000,   # stale metadata 윈도우 ↓
+)
+```
+
+**시각자료**: 4행 표 — 키 / 값 / 근거 / Trade-off + 위 코드 한 컷.
 
 **Speaker Note:**
 Producer 튜닝값 4가지입니다. aiokafka 기준입니다.
-첫째, acks=all 과 enable_idempotence 를 같이 켰습니다. acks=all 은 메시지 손실을 막고, idempotence 는 재시도 시 중복을 막습니다. 둘을 같이 켜야 exactly-once 에 가까워집니다.
+첫째, acks=all 과 enable_idempotence 를 같이 켰습니다. acks=all 은 메시지 손실을 막고, idempotence 는 재시도 시 중복을 막습니다. 둘을 같이 켜야 exactly-once 에 가까워집니다. idempotence 가 켜지면 aiokafka 가 retries 를 내부적으로 알아서 잡으므로 retries 를 명시하지 않습니다.
 둘째, linger.ms 는 50ms 입니다. 0 으로 두면 메시지가 들어오자마자 보내서 throughput 이 떨어지고, 너무 길게 두면 지연이 늘어납니다. 50ms 가 분당 tick 수 기준으로 균형점이었습니다.
 셋째, compression 은 snappy 입니다. CPU 부하가 낮으면서 네트워크와 S3 비용을 둘 다 줄여줍니다.
-넷째, retries 는 10 입니다. 일시적인 네트워크 장애가 나도 자동으로 재시도합니다. idempotence 가 켜져 있어서 재시도해도 중복이 안 생깁니다.
+넷째, metadata_max_age_ms 는 30초입니다. 이건 운영 중 실제 사고 후 추가한 값입니다. 5/14 발표 준비 중 Kafka 컨테이너가 재시작됐는데, producer 가 stale metadata 를 들고 무한 재시도에 빠졌습니다. 기본값 5분이던 metadata 갱신 주기를 30초로 줄여 그 윈도우를 좁혔습니다. 근본 해결은 아니라서 — aiokafka 내부 reconnect 한계 — self-healing guard 를 Phase 2 로 잡았고, 자세한 건 트러블슈팅 문서에 남겼습니다.
 RF 가 1 이라 acks=all 이 사실상 단일 리더 응답이지만, Phase 2 에서 RF=3 으로 갈 때 코드 변경 없이 안전성이 올라갑니다.
 
 ---
 
 ## 13. Airflow DAG 설계 — 장 시간 vs 장 마감 후 분리
 
-> 6 개 DAG, 시간대 분리 — 장 시간 = 분당 트리거, 장 마감 후·주말 = 매니지먼트.
+> 6 개 DAG, 시간대 분리 — 장 시간 = 30분 트리거, 장 마감 후·주말 = 매니지먼트.
 
-- 장 시간 (09–16 KST 평일) : `bronze_to_silver_kis` / `silver_to_gold_vwap` (*/10)
+- 장 시간 (09–16 KST 평일) : `bronze_to_silver_kis` / `silver_to_gold_vwap` (`*/30`)
 - 장 시작 전 : `dim_symbol_daily` 04:00 / `dart_ingest_daily` 06:00 평일
 - 장 마감 후 (평일 18:00) : `iceberg_compaction` (Silver/Gold rewrite_data_files)
 - 주 1회 (일요일 19:00) : `expire_snapshots` (Silver/Gold snapshot 정리)
@@ -264,7 +275,8 @@ RF 가 1 이라 acks=all 이 사실상 단일 리더 응답이지만, Phase 2 �
 
 **Speaker Note:**
 DAG 는 6개입니다. 핵심 원칙은 장 시간 자원과 장 마감 후·주말 자원을 분리하는 것입니다.
-장 시간 09–16 KST 평일에는 두 DAG 가 10분 간격으로 돕니다. Bronze 를 Silver 로 MERGE 하는 DAG 와 Silver 를 Gold 분봉으로 OVERWRITE 하는 DAG 입니다. 10분 간격으로 잡은 이유는 micro-batch 1분과 BI 새로고침 주기 사이 균형점입니다.
+장 시간 09–16 KST 평일에는 두 DAG 가 30분 간격으로 돕니다. Bronze 를 Silver 로 MERGE 하는 DAG 와 Silver 를 Gold 분봉으로 OVERWRITE 하는 DAG 입니다.
+간격을 30분으로 잡은 건 처음 설계가 아니라 운영 중 조정한 값입니다. 처음엔 10분으로 뒀는데, Bronze 가 1분 micro-batch 라 small-files 가 누적되면서 bronze→silver MERGE 가 20분 가까이 걸리기 시작했습니다. 10분 스케줄에 20분 job 이면 run 이 영구 적체됩니다. 그래서 (1) Spark executor core 를 줄여 두 batch DAG 가 동시 실행 가능하게 하고 (2) 스케줄을 30분으로 늘려 job 소요시간보다 길게 잡았습니다. 근본 원인인 Bronze small-files 압축은 Phase 2 입니다. 이 진단·조정 과정은 트러블슈팅 문서에 남겼습니다.
 장 시작 전 두 DAG 가 있습니다. 04:00 에 KIS REST 종목 마스터를 MERGE 하고, 06:00 평일에 전일 DART 공시를 일배치로 끌어옵니다. 장 시간 자원과 충돌하지 않습니다.
 장 마감 후 평일 18:00 에 Iceberg Compaction 이 돕니다. rewrite_data_files 로 Silver 와 Gold 의 작은 파일을 384MB 단위로 합칩니다.
 주말에는 일요일 19:00 에 expire_snapshots 가 돕니다. 30일 이전 snapshot 을 정리합니다. Compaction 과 Expire 는 짝입니다.
