@@ -38,7 +38,7 @@
 
 | # | 제목 | 핵심 메시지 | 시각자료 |
 |---|---|---|---|
-| 01 | 표지 | PortfolioStream — Real-time Korean Stock Tick Lakehouse | 표지 디자인 |
+| 01 | 표지 | tickberg — Real-time Korean Stock Tick Lakehouse | 표지 디자인 |
 | 02 | 문제·도메인·KPI | 실시간 체결을 BI·운영 가시성과 함께 안전히 적재하는 것이 왜 어려운가 | 평가 4축 표 |
 | 03 | Data Source 3종 + 규모 | KIS WebSocket / DART / 신용정보원 — 일 건수·페이로드·갱신 주기 | 3열 비교표 |
 | 04 | 아키텍처 한 장 | 컴퓨트는 Local Mac, 데이터·카탈로그·BI 는 AWS — 단일 환경 원칙 | 핸드오프 §3 다이어그램 |

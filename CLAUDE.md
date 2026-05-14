@@ -2,8 +2,7 @@
 
 ## 정체성
 - 메타코드 DE 부트캠프 8회차 최종 프로젝트 (Public 포트폴리오)
-- 도메인: 한국 주식 시장 실시간 체결 데이터 Lakehouse
-- 컨셉명: **PortfolioStream** — Real-time Korean Stock Market Tick Data Lakehouse
+- 프로젝트명: **tickberg** — Real-time Korean Stock Market Tick Data Lakehouse
 
 ## 미션
 한국투자증권 실시간 체결가 + DART 공시 + 신용정보원 데이터를
