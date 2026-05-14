@@ -53,3 +53,10 @@ htmlcov/
 *.mov
 docs/superpowers/recordings/*.mp4
 docs/superpowers/recordings/*.mov
+
+# 발표 스크린샷·산출물 (내부 캡처 — git 커밋 금지, .gitkeep 만 유지)
+dashboard/screenshots/*.png
+dashboard/screenshots/*.jpg
+dashboard/screenshots/*.jpeg
+docs/superpowers/recordings/screenshots/*.png
+*.pptx
