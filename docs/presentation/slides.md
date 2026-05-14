@@ -622,3 +622,67 @@ AI 활용 방법론은 한 가지 원칙입니다. 절대 코드부터 짜지 �
 궁금한 점도 공유합니다. 동시 구독 종목이 1000 에서 5000 으로 늘어나면 Kafka partition 수를 어떻게 재조정해야 할지, 그리고 partition 수 변경 시 기존 메시지 순서가 어떻게 영향받는지가 가장 큰 미해결 질문입니다.
 
 ---
+
+## 31. Phase 2 로드맵
+
+> dbt / 자동매매 (가설) / EMR Serverless / MSK — 트리거 조건 명시.
+
+- dbt Semantic Layer : 비즈니스 정의 (VWAP, 거래대금) 변경 빈도가 월 1+ 회 도달 시
+- 자동매매 (가설) : Gold VWAP 기반 신호 → 백테스트 수익률 <TODO> → 라이브 검증
+- EMR Serverless : 일 1 천만 tick 또는 Spark Standalone 단일 노드 OOM 시
+- MSK : Kafka 처리량 100MB/s 도달 또는 RF=3 필요 시
+
+**시각자료**: 4 단계 로드맵 — 각 단계의 트리거 조건과 예상 비용.
+
+**Speaker Note:**
+Phase 2 로드맵은 "언제 무엇을 도입할지 트리거 조건을 명시한 점" 이 핵심입니다.
+dbt 는 비즈니스 정의 변경 빈도가 월 1 회를 넘으면 도입합니다. 지금은 Phase 1 분기라 SQL 직접 관리로 충분합니다.
+자동매매는 가설 단계입니다. Gold VWAP 기반 신호로 백테스트를 돌리고 수익률을 보고 결정합니다. Phase 1 본 발표에서는 수익성 숫자를 약속하지 않습니다.
+EMR Serverless 는 Spark Standalone 단일 노드가 OOM 으로 죽는 빈도가 주 1 회를 넘으면 검토합니다.
+MSK 는 Kafka 처리량 100MB/s 또는 RF=3 이 필요한 시점에 검토합니다. Phase 1 은 RF=1 로 충분하지만, 상용 운영 가정이면 RF=3 으로 갈 수밖에 없습니다.
+모든 도입 결정에 트리거 조건이 명시되어 있다는 게 의도된 설계입니다.
+
+---
+
+## 32. 회고 — 결정의 비용
+
+> 모든 결정에 trade-off — DDL 전략 변경 / COW 수용 / 자동매매 OOS 가 솔직한 비용.
+
+- DDL 전략 : Spark CREATE → Athena SQL 전환 (개발 중반) — 일부 Iceberg key 거부 수용
+- Iceberg COW : MOR 가 더 효율이지만 Athena DDL 한계로 COW 수용 → write amp 모니터링
+- 자동매매 OOS : 평가자 인상 약화 vs Phase 1 안정성 — 안정성 우선
+- 데이터 퀄리티 : 헬스 쿼리 vs DQ 프레임워크 — 시간 제약으로 헬스 쿼리
+
+**시각자료**: 4 행 표 — 결정 / 비용 / 회수 시점.
+
+**Speaker Note:**
+모든 결정에는 비용이 있습니다. 솔직히 공유합니다.
+첫째, DDL 전략을 개발 중반에 바꾸었습니다. 처음엔 Spark 에서 CREATE TABLE 을 호출했는데, cold start 와 단일 진실원 문제로 Athena SQL 로 전환했습니다. 그 대가로 Iceberg 네이티브 키 일부 (format-version, write.merge.mode) 가 거부되는 걸 수용했습니다.
+둘째, Iceberg COW 를 그대로 받았습니다. MOR 가 MERGE 효율이 더 좋지만 Athena DDL 한계로 COW 가 기본값이 됐고, write amplification 을 모니터링하면서 임계 시 Spark bootstrap 으로 전환하기로 했습니다.
+셋째, 자동매매를 빼서 평가자 인상이 약해질 위험이 있습니다. 그래도 Phase 1 안정성과 운영 가시성에 집중한 결정입니다.
+넷째, 데이터 퀄리티 프레임워크 미도입. 시간 제약 때문이고, Phase 1.5 의 첫 번째 항목입니다.
+이 모든 비용을 알고 결정했고, 회수 시점도 정해두었습니다.
+
+---
+
+## 33. Q&A
+
+> 예상 질문 8 종 — 한 줄 답변 사전 (핸드오프 §11).
+
+- "왜 Kafka 인가? Kinesis 아니고?" → Phase 1 로컬 컴퓨트 정책, Phase 2 트래픽 시 MSK
+- "왜 Spark 인가? Glue Job 아니고?" → 비용·디버깅 단순성, 100x 시 EMR Serverless 비교
+- "왜 dbt 안 썼나?" → Phase 1 은 PySpark + SQL DDL 직접, dbt = Phase 2
+- "Iceberg v2 인 이유?" → 행 단위 delete 지원, Athena 도 v2 만 지원
+- "장 마감 후엔 무엇이 도나?" → Compaction 평일 18:00 / Expire 일요일 19:00 (dim_symbol·DART 는 장 시작 전 배치)
+
+**시각자료**: 5 행 표 + 추가 3 종은 핸드오프 §11 참조.
+
+**Speaker Note:**
+Q&A 슬라이드는 예상 질문에 대한 즉답 카드입니다.
+다섯 가지를 슬라이드에 담았고, 추가 세 가지 (왜 Airflow 인가, 왜 Bronze 90일 후 Glacier IR 인가, 왜 ap-northeast-2 인가) 는 핸드오프 §11 에 정리되어 있습니다.
+모든 답변의 공통 원칙은 두 가지입니다.
+첫째, "현재 결정의 트리거 조건" 을 함께 답합니다. 그냥 "지금은 그래요" 가 아니고 "지금은 이래서 이걸 골랐고, 이런 신호가 보이면 바꿉니다" 라고 답합니다.
+둘째, Phase 1 과 Phase 2 의 경계를 명확히 그립니다. "그건 Phase 2 입니다" 라고 답해도 정당화되는 결정들입니다.
+감사합니다. 질문 받겠습니다.
+
+---
