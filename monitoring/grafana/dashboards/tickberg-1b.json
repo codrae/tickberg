@@ -1,0 +1,118 @@
+{
+  "id": 2,
+  "uid": "tickberg-1b",
+  "title": "tickberg — 1B 풍부화 패널",
+  "timezone": "Asia/Seoul",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "KIS publish rate per symbol (msg/s, 1m avg)",
+      "description": "장 시간대 평균 30–50/sec, 피크 ~250/sec. 종목별 burst 분포 확인.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (symbol) (rate(kis_messages_published_total[1m]))",
+          "legendFormat": "{{symbol}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "WebSocket connected",
+      "description": "영업시간만 1. 마감 후 0 정상.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "kis_ws_connected", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Token refresh failures (24h)",
+      "description": "03:30 KST 정기 갱신 + on-demand. 04:30 cutoff 전 0 유지 기대.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "increase(kis_token_refresh_failures_total[24h])", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 3}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Kafka topic 'kis.tick.raw' broker-side in rate (msg/s)",
+      "description": "producer → broker 흡수율. KIS publish rate 와 ~동기 — 차이 크면 backlog 의심.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "kafka_topic_messagesinpersec_rate{topic=\"kis.tick.raw\"}",
+          "legendFormat": "broker in/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "ops", "custom": {"drawStyle": "line", "fillOpacity": 10}}
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Parse errors (1h)",
+      "description": "KIS payload 포맷 변경 또는 producer 버그 감지. 5 이상 노란, 50 이상 빨간.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "increase(kis_parse_errors_total[1h])", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5},
+              {"color": "red", "value": 50}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8}
+    }
+  ]
+}

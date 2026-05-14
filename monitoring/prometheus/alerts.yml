@@ -38,3 +38,22 @@ groups:
         annotations:
           summary: "Producer publish rate vs Kafka broker in rate diff > 500/min"
           description: "Producer 가 Kafka 에 publish 하는데 broker 가 못 받는 중. aiokafka backlog 또는 broker pressure."
+
+  - name: tickberg-1b
+    interval: 30s
+    rules:
+      - alert: KisTokenRefreshFailingTrend
+        expr: increase(kis_token_refresh_failures_total[1h]) > 3
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Token refresh failed > 3 times in last 1h"
+          description: "spec §6.1.1 04:30 cutoff 위험 — 수동 재발급 검토. TokenRefreshFailure (즉시 알림) 와 보완: hourly trend."
+
+      - alert: KisParseErrorBurstSustained
+        expr: increase(kis_parse_errors_total[10m]) > 100
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Parse errors > 100 in 10m sustained 5m"
+          description: "KIS payload schema 변경 의심. ProducerParseErrorSpike (5m burst) 와 보완: 10m sustained."
