@@ -455,3 +455,67 @@ Orphan files cleanup 은 Phase 1.5 로 미뤘습니다. 운영 초기에 orphan 
 효과는 쿼리 플랜에서 측정됩니다. file scan 수가 줄면 Athena 비용과 지연이 둘 다 떨어집니다. 실측값은 발표 직전 캡처합니다.
 
 ---
+
+## 23. 운영 ⑤ — 테이블별 정책 매트릭스
+
+> 모든 테이블에 같은 정책 X — 데이터 성격별로 Compaction·Expire·Lifecycle 분리.
+
+- Bronze (Parquet) : S3 Lifecycle 90일 → Glacier IR / athena-results 30일 만료
+- Silver tick·DART (Iceberg) : Compaction 평일 18:00 / Expire 일요일 19:00 (30d, retain 5)
+- Gold vwap_1m (Iceberg) : Compaction 평일 18:00 / Expire 일요일 19:00 (30d, retain 5)
+- dim_symbol (Iceberg) : 일 1회 MERGE 만 — row 수 적어 Compaction·Expire 대상 제외
+
+**시각자료**: 매트릭스 — 테이블 4행 × 정책 열 (Compaction / Expire / Lifecycle / 비고).
+
+**Speaker Note:**
+테이블별로 정책이 다른 이유는 데이터 성격이 다르기 때문입니다.
+Bronze 는 Parquet 이라 Iceberg 매니지먼트가 없습니다. 대신 S3 Lifecycle 로 90일 후 Glacier IR 로 보냅니다. KIS API 재호출 비용보다 Glacier IR 보관 비용이 훨씬 싸서 이 결정이 맞습니다. Athena 쿼리 결과도 30일 후 자동 만료시킵니다.
+Silver 의 tick 테이블과 DART 테이블, 그리고 Gold 분봉 테이블은 동일한 Iceberg 정책을 받습니다. 평일 18:00 Compaction, 일요일 19:00 Expire, 30일 보존에 최소 5 snapshot 유지입니다.
+Compaction 은 파일을 합치고 Expire 는 메타데이터를 정리합니다. 둘은 짝입니다.
+dim_symbol 은 다릅니다. 일 1회 MERGE 만 도는 종목 마스터라 row 수가 수천 건 수준입니다. 작은 파일 문제도 snapshot 누적 문제도 거의 없어서 Compaction 과 Expire 대상에서 아예 제외했습니다. 불필요한 Spark job 을 안 돌리는 게 비용 측면에서 맞습니다.
+이 매트릭스가 의미하는 건 정책을 통합하지 않고 의도적으로 분리했다는 점입니다. 6개월 후 합류한 팀원이 이 표를 보면 왜 다르게 운영되는지 한 번에 이해할 수 있습니다.
+
+---
+
+## 24. 운영 ⑥ — 동시성 충돌 회피 패턴
+
+> Streaming·MERGE·Compaction·Expire 가 같은 테이블을 건드려도 conflict 가 안 나는 이유.
+
+- Iceberg snapshot isolation : 각 writer 가 base snapshot 기반 새 snapshot atomic 생성
+- 시간대 분리 : MERGE/OVERWRITE 평일 09–16 / Compaction 평일 18:00 / Expire 일요일 19:00
+- `max_active_runs=1` : 같은 DAG 의 run 이 절대 겹치지 않음 (연속 MERGE 중첩 차단)
+- DAG `retries=2` (retry_delay 1분) : 일시 충돌·장애 시 Airflow 레벨 자동 재시도
+
+**시각자료**: 동시성 타임라인 — 09–16 MERGE/OVERWRITE / 18:00 Compaction / 일요일 19:00 Expire 시간축 분리.
+
+**Speaker Note:**
+Iceberg 가 ACID 트랜잭션을 주지만 그게 자동으로 모든 충돌을 막아주는 건 아닙니다.
+충돌은 두 writer 가 같은 테이블의 같은 파티션을 동시에 rewrite 할 때 발생합니다.
+첫 번째 회피 패턴은 시간대 분리입니다. MERGE 와 OVERWRITE 는 평일 09시에서 16시, Compaction 은 평일 18시, Expire 는 일요일 19시입니다. 매니지먼트 작업과 적재 작업이 시간상 절대 겹치지 않습니다.
+두 번째는 max_active_runs 를 1로 둔 겁니다. 한 DAG 의 이전 run 이 안 끝났는데 다음 스케줄이 와도 새 run 이 시작되지 않습니다. 연속된 Silver MERGE 가 중첩되는 상황 자체가 없습니다.
+세 번째는 Airflow DAG 레벨 retry 입니다. retries 2, retry_delay 1분. 일시적인 충돌이나 장애가 나도 1분 뒤 자동으로 재시도합니다.
+이 세 가지면 Phase 1 규모에서 conflict 로 인한 운영 사고는 사실상 0 입니다.
+
+---
+
+## 25. 매트릭 모니터링 — Prometheus + Grafana
+
+> KIS Producer / Kafka JMX / Spark master·driver → Prometheus 15s scrape → Grafana.
+
+- Scrape 대상 4종 : kis-producer:9100 / kafka-jmx-exporter:7071 / spark-master / spark-driver
+- KIS Producer 메트릭 : `kis_ws_connected` / `kis_parse_errors_total` / `kis_token_refresh_failures_total` / `kis_messages_published_total`
+- Alert 6종 : WebSocket Down / Parse error spike·burst / Token refresh fail·trend / Broker rate mismatch
+- Grafana 대시보드 : `tickberg-1a` `tickberg-1b` — 장애 인지 5분 이내 목표
+
+**시각자료**: Grafana 대시보드 스크린샷 placeholder + Prometheus scrape 토폴로지. `<TODO: 실측 스샷>`
+
+**Speaker Note:**
+모니터링은 Prometheus 와 Grafana 입니다. 15초 간격으로 scrape 합니다.
+Scrape 대상은 네 종류입니다. KIS Producer, Kafka JMX exporter, Spark master, Spark driver. 각자 Prometheus 메트릭 엔드포인트를 노출합니다.
+KIS Producer 가 가장 중요한 메트릭을 냅니다. WebSocket 연결 상태, parse error 수, 토큰 갱신 실패 수, 발행한 메시지 수입니다.
+Alert 는 6종입니다. WebSocket 이 5분간 끊기면 critical, parse error 가 튀면 warning, 토큰 갱신이 실패하면 critical 같은 식입니다.
+한 가지 강조하고 싶은 건 WebSocket Down alert 의 description 에 "장 마감 후엔 무시 가능" 이라고 명시했다는 점입니다. 장 시간과 장 마감 후를 alert 단에서 구분합니다.
+Kafka 쪽은 JMX exporter 로 broker in-rate 를 받아서, producer 가 publish 하는 rate 와 broker 가 받는 rate 의 차이가 분당 500을 넘으면 alert 합니다.
+Grafana 대시보드는 1a, 1b 두 개입니다. 목표는 장애 인지 시간 5분 이내입니다.
+
+---
