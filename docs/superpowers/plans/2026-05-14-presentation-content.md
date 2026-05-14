@@ -742,23 +742,24 @@ Rollback 은 emergency 도구입니다. 일상적으로 의존하면 그건 사�
 
 ---
 
-## 21. 운영 ③ — Expire 정책
+## 21. 운영 ③ — Expire Snapshots 정책
 
-> 최소 3일 보존 권장 — Spark 리소스·동시성·Rollback 여유 모두 고려.
+> 30일 보존 + 최소 5 snapshot 유지 — 주 1회 일요일 19:00 KST, Iceberg 자동화 #2.
 
-- 기본 정책 : 7일 보존 (`expire_snapshots older_than=7d`)
-- 최소 3일 : Rollback / Time-travel 윈도우 + 평일 vs 주말 안전 마진
-- Spark 리소스 : Expire 도 Spark job — 18:30 KST 평일 Compaction 직후 실행
-- 테이블별 분리 : Bronze(Parquet, N/A) / Silver(7d) / Gold(7d) / dim_symbol(30d)
+- 정책 : `expire_snapshots(older_than=30d, retain_last=5)` — Iceberg 가 보수적인 쪽 적용
+- 스케줄 : 일요일 19:00 KST (`0 19 * * SUN`) — 장 마감 후 retention window
+- 대상 : silver_kis_tick_clean / silver_dart_disclosure_clean / gold_symbol_vwap_1m
+- Compaction 과 짝 : file 병합(평일 18:00) + metadata 정리(일요일 19:00)
 
-**시각자료**: 정책 표 — 테이블 / 보존 / 실행 시각 / 근거.
+**시각자료**: 정책 표 — 파라미터 / 값 / 근거 + Compaction–Expire 짝 타임라인.
 
 **Speaker Note:**
-Expire 정책은 Iceberg snapshot 을 며칠까지 남길지의 문제입니다.
-기본은 7일입니다. 7일이면 한 주가 들어가서 평일 vs 주말 패턴이 비교 가능하고, Rollback 윈도우로도 충분합니다.
-최소 3일을 권장하는 이유는 두 가지인데, 평일 마지막 날 발견한 이슈를 다음 평일에 Rollback 할 수 있어야 하고, Spark 리소스가 부족할 때 expire job 이 한 번 실패해도 다음 날 재시도 여유가 있어야 합니다.
-실행 시각은 18:30 KST 평일. Compaction 직후 Spark cluster 가 아직 떠 있을 때 같이 돌립니다. 새 Spark cluster 를 띄우지 않습니다.
-테이블별로 다르게 둡니다. dim_symbol 은 30 일까지 보존하는데, 액면분할 같은 이벤트는 한 달 윈도우로 audit 할 일이 종종 있습니다.
+Expire Snapshots 는 Iceberg 자동화의 두 번째입니다. 첫 번째 Compaction 과 짝을 이룹니다.
+정책은 30일 이전 snapshot 을 정리하되 최소 5개는 무조건 유지합니다. Iceberg 가 older_than 과 retain_last 중 보수적인 쪽을 적용해서, retention 이 짧아도 최근 5개는 절대 안 지웁니다. Rollback 과 Time-travel 윈도우를 보장하기 위해서입니다.
+스케줄은 주 1회 일요일 19:00 KST 입니다. 평일이 아닌 이유는 snapshot 정리가 자주 필요한 작업이 아니고, 주말 장 마감 시간대가 Spark 리소스가 가장 한가하기 때문입니다.
+대상은 Iceberg 테이블 셋입니다. silver_kis_tick_clean, silver_dart_disclosure_clean, gold_symbol_vwap_1m.
+Compaction 은 평일 18:00 에 파일을 병합하고, Expire 는 일요일 19:00 에 메타데이터를 정리합니다. 둘이 합쳐져야 storage 와 query plan 이 둘 다 최적화됩니다.
+한 테이블 expire 가 실패해도 다음 테이블로 넘어가도록 WARN 처리해서, 한 번의 실패가 전체를 막지 않습니다.
 
 ---
 
@@ -809,21 +810,22 @@ git commit -m "docs(presentation): add operations slides 1/2 — snapshot/rollba
 ````markdown
 ## 23. 운영 ⑤ — 테이블별 정책 매트릭스
 
-> 모든 테이블에 같은 정책 X — Bronze/Silver/Gold/dim_symbol 각각 다른 루틴.
+> 모든 테이블에 같은 정책 X — 데이터 성격별로 Compaction·Expire·Lifecycle 분리.
 
-- Bronze (Parquet) : Lifecycle 90일 → Glacier IR (S3 단)
-- Silver (Iceberg) : Compaction 18:00 / Expire 7d / Orphan Phase 1.5
-- Gold (Iceberg) : Compaction 18:00 / Expire 7d / Orphan Phase 1.5
-- dim_symbol (Iceberg) : Compaction 주 1회 / Expire 30d (audit 윈도우 길게)
+- Bronze (Parquet) : S3 Lifecycle 90일 → Glacier IR / athena-results 30일 만료
+- Silver tick·DART (Iceberg) : Compaction 평일 18:00 / Expire 일요일 19:00 (30d, retain 5)
+- Gold vwap_1m (Iceberg) : Compaction 평일 18:00 / Expire 일요일 19:00 (30d, retain 5)
+- dim_symbol (Iceberg) : 일 1회 MERGE 만 — row 수 적어 Compaction·Expire 대상 제외
 
-**시각자료**: 매트릭스 — 테이블 4행 × 정책 4열 (Compaction / Expire / Orphan / Lifecycle).
+**시각자료**: 매트릭스 — 테이블 4행 × 정책 열 (Compaction / Expire / Lifecycle / 비고).
 
 **Speaker Note:**
 테이블별로 정책이 다른 이유는 데이터 성격이 다르기 때문입니다.
-Bronze 는 Parquet 이라 Iceberg 매니지먼트가 없습니다. 대신 S3 Lifecycle 로 90 일 후 Glacier IR 로 보냅니다. KIS API 재호출 비용보다 Glacier IR 보관 비용이 훨씬 싸서 이 결정이 맞습니다.
-Silver 와 Gold 는 거의 동일한 정책입니다. 18:00 평일 Compaction, 7 일 Expire, Orphan 은 Phase 1.5.
-dim_symbol 은 다릅니다. 일 1회 MERGE 라 row 수가 적고, 액면분할 같은 audit 가 한 달 단위라 Expire 를 30 일로 길게 잡습니다. Compaction 은 주 1 회로 충분합니다.
-이 매트릭스가 의미하는 건 "정책을 통합하지 않고 분리한 의도" 입니다. 6 개월 후 합류한 팀원이 이 표를 보면 왜 다르게 운영되는지 한 번에 이해할 수 있습니다.
+Bronze 는 Parquet 이라 Iceberg 매니지먼트가 없습니다. 대신 S3 Lifecycle 로 90일 후 Glacier IR 로 보냅니다. KIS API 재호출 비용보다 Glacier IR 보관 비용이 훨씬 싸서 이 결정이 맞습니다. Athena 쿼리 결과도 30일 후 자동 만료시킵니다.
+Silver 의 tick 테이블과 DART 테이블, 그리고 Gold 분봉 테이블은 동일한 Iceberg 정책을 받습니다. 평일 18:00 Compaction, 일요일 19:00 Expire, 30일 보존에 최소 5 snapshot 유지입니다.
+Compaction 은 파일을 합치고 Expire 는 메타데이터를 정리합니다. 둘은 짝입니다.
+dim_symbol 은 다릅니다. 일 1회 MERGE 만 도는 종목 마스터라 row 수가 수천 건 수준입니다. 작은 파일 문제도 snapshot 누적 문제도 거의 없어서 Compaction 과 Expire 대상에서 아예 제외했습니다. 불필요한 Spark job 을 안 돌리는 게 비용 측면에서 맞습니다.
+이 매트릭스가 의미하는 건 정책을 통합하지 않고 의도적으로 분리했다는 점입니다. 6개월 후 합류한 팀원이 이 표를 보면 왜 다르게 운영되는지 한 번에 이해할 수 있습니다.
 
 ---
 
