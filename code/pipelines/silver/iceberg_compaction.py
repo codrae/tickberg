@@ -59,8 +59,13 @@ def main() -> None:
     target = args.target_mb * 1024 * 1024
 
     for t in args.tables:
-        result = compact_table(spark, table=t, target_file_size_bytes=target)
-        print(f"compacted {t}: {result}")
+        # per-table try/except — 한 테이블 compaction 실패가 나머지를 막지
+        # 않도록 (expire_snapshots.py 와 동일 패턴).
+        try:
+            result = compact_table(spark, table=t, target_file_size_bytes=target)
+            print(f"compacted {t}: {result}")
+        except Exception as e:  # noqa: BLE001
+            print(f"WARN compaction failed for {t}: {e}")
 
 
 if __name__ == "__main__":
