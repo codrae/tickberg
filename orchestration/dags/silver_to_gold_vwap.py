@@ -23,7 +23,7 @@ default_args = {
 with DAG(
     dag_id="silver_to_gold_vwap",
     default_args=default_args,
-    schedule="*/30 9-16 * * MON-FRI",
+    schedule="30 9-15 * * MON-FRI",
     start_date=datetime(2026, 5, 11, 9, 0),
     catchup=False,
     max_active_runs=1,
