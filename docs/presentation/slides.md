@@ -353,7 +353,7 @@ Phase 2 에서는 Great Expectations 나 Soda 같은 데이터 퀄리티 프레�
 - 종목별 거래량 점유율 (Pie) : 영업일 1일 누적 거래량 점유율
 - 데이터 출처 : `tickberg.gold_symbol_vwap_1m` (Athena via Superset)
 
-**시각자료**: KPI 탭 스크린샷. **캡처 방법**: `docker compose -f infra/docker/docker-compose.yml up -d superset` → http://localhost:8088 (admin/admin) → `dashboard/superset/setup.md` 대로 Athena 연결 + KPI 탭 3 chart (VWAP 라인 / 거래량 바 / 점유율 파이) 생성 후 캡처. Superset UI 셋업이 선행 작업.
+**시각자료**: KPI 탭 스크린샷 (✅ 캡처 완료) — Superset `tickberg — KPI 탭` 대시보드. VWAP 추세 라인 + 분봉 거래량 바 + 종목별 거래량 점유율 파이 3 chart. Gamma 임포트 시 이미지 삽입.
 
 **Speaker Note:**
 비즈니스 KPI 탭은 세 차트로 구성했습니다.
@@ -361,7 +361,7 @@ VWAP 추세는 종목별 1분봉 VWAP 의 시계열입니다. gold 테이블과 
 분봉 거래량은 종목별 분당 거래량 막대 차트입니다. 어느 종목이 지금 가장 활발한지 보입니다.
 종목별 거래량 점유율은 영업일 1일 누적 기준 파이 차트입니다.
 데이터는 모두 Gold 테이블 한 곳에서 옵니다. 비즈니스 정의 변경 요청이 들어와도 Gold DDL 과 집계 SQL 두 군데만 보면 됩니다.
-실제 스크린샷은 발표 직전 캡처해서 슬라이드에 박아 넣을 예정입니다.
+실제 스크린샷은 Superset 대시보드에서 캡처해 두었고, Gamma 슬라이드에 삽입합니다.
 
 ---
 
@@ -374,7 +374,7 @@ VWAP 추세는 종목별 1분봉 VWAP 의 시계열입니다. gold 테이블과 
 - Silver Throughput per 5min (24h) : 영업시간 패턴 시각화 (09:00 급상승 / 15:30 종료)
 - DART 공시 타임라인 (Table) : 최근 14일 공시, VWAP·거래량과 cross-reference
 
-**시각자료**: 운영 탭 스크린샷. **캡처 방법**: Superset (위 17번과 동일 셋업) → 운영 탭 4 chart grid (Bronze freshness / Symbol coverage / Silver throughput / DART 타임라인) 생성 후 캡처.
+**시각자료**: 운영 탭 스크린샷 (✅ 캡처 완료) — Superset `tickberg — 운영 탭` 대시보드. Bronze Freshness (Big Number) + Symbol Coverage 바 + Silver Throughput 바 + DART 공시 타임라인 테이블 4 chart grid. Gamma 임포트 시 이미지 삽입.
 
 **Speaker Note:**
 운영 탭은 평가 4축의 운영 가시성에 정면으로 답하는 슬라이드입니다.
