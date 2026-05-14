@@ -99,7 +99,8 @@ def main() -> None:
     spark.sparkContext.setLocalProperty("spark.scheduler.pool", "batch_pool")
     spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
 
-    silver = spark.table(args.silver_table).where(_hour_filter(hour))
+    # hour 필터는 compute_vwap_for_hour 내부에서 적용 — 여기서 중복 X.
+    silver = spark.table(args.silver_table)
     out = compute_vwap_for_hour(spark, silver_df=silver, hour_kst=hour)
     out.writeTo(args.gold_table).overwritePartitions()
     print(f"gold overwrite hour={hour.isoformat()} rows={out.count()}")

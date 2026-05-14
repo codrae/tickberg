@@ -44,6 +44,7 @@ class KisWebSocket:
         symbols: list[str],
         ws_connect: Callable[[str], Awaitable["_WsLike"]],
         on_connect: Callable[[bool], None] | None = None,
+        on_parse_error: Callable[[], None] | None = None,
         business_day_provider: Callable[[], date] = lambda: date.today(),
     ):
         self._ws_url = ws_url
@@ -51,6 +52,7 @@ class KisWebSocket:
         self._symbols = list(symbols)
         self._ws_connect = ws_connect
         self._on_connect = on_connect or (lambda _b: None)
+        self._on_parse_error = on_parse_error or (lambda: None)
         self._business_day = business_day_provider
 
     async def stream(self) -> AsyncIterator[dict]:
@@ -96,6 +98,7 @@ class KisWebSocket:
                     rows = parse_h0stcnt0(payload, business_day=self._business_day())
                 except ParseError as e:
                     log.error("parse error: %s | raw=%s", e, payload[:200])
+                    self._on_parse_error()
                     continue
                 for r in rows:
                     yield r

@@ -9,8 +9,11 @@ import argparse
 import os
 from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from pyspark.sql import DataFrame, Row, SparkSession
+
+KST = ZoneInfo("Asia/Seoul")
 
 
 def merge_dim_symbol(spark: SparkSession, *, src_df: DataFrame, dim_table: str) -> None:
@@ -39,7 +42,7 @@ def fetch_rows_from_kis(symbols: list[str], *, kis_client) -> list[Row]:
     market 은 KOSPI 하드코딩, par_value/shares_outstanding 은 0 유지.
     Phase 1B 에서 추가 TR (예: inquire-price) 로 보강.
     """
-    now = datetime.now()
+    now = datetime.now(KST).replace(tzinfo=None)  # KST 벽시계 (다른 pipeline 과 일치)
     out: list[Row] = []
     for sym in symbols:
         info = kis_client.get_stock_info(sym)

@@ -96,6 +96,7 @@ async def main() -> None:
                 ws_url=ws_url, auth=auth, symbols=symbols,
                 ws_connect=_ws_connect,
                 on_connect=lambda b: health_metrics.ws_connected.set(1 if b else 0),
+                on_parse_error=health_metrics.parse_errors.inc,
                 business_day_provider=_today_kst,
             )
 

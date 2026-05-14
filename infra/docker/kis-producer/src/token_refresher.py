@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -29,7 +30,9 @@ def next_refresh_at(now: datetime) -> datetime:
     return today_target + timedelta(days=1)
 
 
-async def run(auth: KisAuth, on_failure: callable | None = None) -> None:
+async def run(
+    auth: KisAuth, on_failure: Callable[[Exception], None] | None = None
+) -> None:
     while True:
         now = datetime.now(KST)
         target = next_refresh_at(now)
