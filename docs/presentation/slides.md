@@ -251,3 +251,82 @@ Producer 튜닝값 4가지입니다. aiokafka 기준입니다.
 RF 가 1 이라 acks=all 이 사실상 단일 리더 응답이지만, Phase 2 에서 RF=3 으로 갈 때 코드 변경 없이 안전성이 올라갑니다.
 
 ---
+
+## 13. Airflow DAG 설계 — 장 시간 vs 장 마감 후 분리
+
+> 5 개 DAG, 시간대 분리 — 장 시간 = 분당 트리거, 장 마감 후 = 매니지먼트.
+
+- 장 시간 (09–16 KST 평일) : `bronze_to_silver_kis` */10 / `silver_to_gold_vwap` */10
+- 장 시작 전 (04:00) : `dim_symbol_daily` (KIS 종목 마스터 MERGE)
+- 장 시작 전 (06:00 평일) : `dart_ingest_daily` (전일 공시 일배치)
+- 장 마감 후 (18:00 평일) : `iceberg_compaction` (Silver/Gold rewrite_data_files)
+
+**시각자료**: DAG 그래프 한 컷 — 시간 축 가로, DAG 5개 세로 배치.
+
+**Speaker Note:**
+DAG 는 5개입니다. 그리고 핵심 원칙은 장 시간 자원과 장 마감 후 자원을 분리하는 것입니다.
+장 시간 09–16 KST 평일에는 두 DAG 가 10분 간격으로 돕니다. Bronze 를 Silver 로 MERGE 하는 DAG 와 Silver 를 Gold 분봉으로 OVERWRITE 하는 DAG 입니다. 10분 간격으로 잡은 이유는 micro-batch 1분과 BI 새로고침 주기 사이 균형점입니다.
+장 시작 전 두 DAG 가 있습니다. 04:00 에 KIS REST 종목 마스터를 MERGE 하고, 06:00 평일에 전일 DART 공시를 일배치로 끌어옵니다. 장 시간 자원과 충돌하지 않습니다.
+장 마감 후 18:00 평일에 Iceberg Compaction 이 돕니다. rewrite_data_files 로 Silver 와 Gold 의 작은 파일을 384MB 단위로 합칩니다. Spark cluster 가 가장 한가한 시간이라 안전합니다.
+
+---
+
+## 14. 로그 설계 — 무엇을 남겼나
+
+> Airflow log + Spark task log + 비즈니스 카운트 — 5분 안에 어느 단계가 깨졌는지 보인다.
+
+- Airflow task_instance : DAG / task / try_number / log_url / 실행 시간
+- Spark task 로그 : Iceberg snapshot id, rewrite metrics, output rows
+- 비즈니스 카운트 : Bronze rows → Silver rows → Gold rows (각 단계 로그)
+- 의도 : 평가자가 Airflow UI 한 화면에서 단계별 row 수 차이를 즉시 확인
+
+**시각자료**: 로그 샘플 컷 — Spark stdout 의 "wrote N rows to silver_kis_tick_clean" 라인 한 줄 + Airflow task UI 스크린샷 placeholder.
+
+**Speaker Note:**
+로그는 세 층입니다.
+첫째, Airflow task_instance. DAG 이름, task 이름, try 번호, 실행 시간, 로그 URL 이 자동으로 기록됩니다. UI 에서 바로 확인 가능합니다.
+둘째, Spark task 로그. Iceberg snapshot id, rewrite metrics, 그리고 output row 수를 남깁니다. snapshot id 가 로그에 남아 있어서 나중에 audit 할 때 Time-travel 의 기준점이 됩니다.
+셋째, 비즈니스 카운트. Bronze, Silver, Gold 각 단계에서 처리한 row 수를 로그에 찍습니다. 단계 사이 비율이 깨지면 어느 단계가 문제인지 1초에 보입니다.
+의도는 5분 헬스체크입니다. 평가자가 운영자 입장으로 본다고 가정하고, Airflow UI 한 화면만 봐도 어느 단계가 깨졌는지 보이도록 설계했습니다.
+
+---
+
+## 15. 검증 쿼리 4종
+
+> Athena 한 줄 쿼리로 Bronze freshness / Silver dedup / symbol coverage / Gold partition completeness.
+
+- `01_bronze_freshness.sql` : `lag_minutes` (영업시간 1–2 분 정상)
+- `02_silver_dedup_rate.sql` : `silver_rows / bronze_rows` (0.95–1.0 정상)
+- `03_symbol_coverage.sql` : 최근 15분 종목 카운트 (3 종목 모두)
+- `04_gold_partition_completeness.sql` : hour 별 row 수 (180 = 3 × 60 정상)
+
+**시각자료**: 4개 쿼리 결과 카드 — 각 쿼리 한 줄 결과를 카드 4장으로.
+
+**Speaker Note:**
+검증 쿼리는 4종입니다. 모두 Athena 한 번에 도는 짧은 쿼리입니다.
+첫째, Bronze freshness. 가장 최근 ingest_ts 와 현재 시각 사이 분 차이입니다. 영업시간이면 1–2분, 장 마감 후엔 자연스럽게 커집니다.
+둘째, Silver dedup rate. Bronze row 수와 Silver row 수를 비교한 비율입니다. 0.95에서 1.0 사이가 정상이고, 그 미만이면 MERGE 가 과도하게 dedup 했거나 누락된 것입니다.
+셋째, symbol coverage. 최근 15분 동안 3 종목이 모두 나타나는지 봅니다. 한 종목이 빠지면 KIS WebSocket subscriber 가 그 종목만 끊겼을 가능성이 있습니다.
+넷째, Gold partition completeness. 시간당 row 수가 3 종목 × 60 분 = 180 이어야 합니다. 빠지면 분봉 결손이 생긴 거고 즉시 추적합니다.
+
+---
+
+## 16. 데이터 퀄리티 체크
+
+> 4 종 헬스 쿼리 + 비즈니스 카운트 로그 → NULL·중복·시점 일관성 모두 잡힘.
+
+- NULL : Silver DDL 의 `trade_uid` 필수 / `price>0` 필터
+- 중복 : Silver MERGE 의 `ON trade_uid` (멱등성 보장)
+- 시점 일관성 : `ingest_ts` vs `trade_ts_kst` 차이 모니터링 → 비정상 lag 감지
+- 향후 : Great Expectations / Soda 도입 검토 (Phase 2)
+
+**시각자료**: 체크 매트릭스 — 차원(NULL/중복/시점) × 방어선(DDL/MERGE/쿼리/향후).
+
+**Speaker Note:**
+퀄리티 체크는 세 차원입니다.
+NULL 차원. Silver DDL 에 trade_uid 가 필수 필드라 NULL 이면 INSERT 자체가 실패합니다. price 가 0 인 비정상 tick 은 Silver 변환 시 필터로 제거합니다.
+중복 차원. Silver MERGE 의 ON 조건이 trade_uid 입니다. 같은 trade_uid 가 두 번 들어와도 update 됩니다. 즉, MERGE 가 멱등입니다.
+시점 일관성. ingest_ts 와 trade_ts_kst 차이를 모니터링합니다. WebSocket → Kafka → Bronze 까지의 lag 가 비정상이면 즉시 잡힙니다.
+Phase 2 에서는 Great Expectations 나 Soda 같은 데이터 퀄리티 프레임워크를 검토할 예정입니다. Phase 1 은 헬스 쿼리 4 종 + 비즈니스 카운트 로그로 충분히 잡힌다고 봤습니다.
+
+---
