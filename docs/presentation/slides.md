@@ -108,3 +108,44 @@ EDA 결과 수치는 발표 직전 Athena 조회로 채워 넣을 예정입니�
 다섯째, dbt 와 자동매매는 Phase 2 입니다. Phase 1 에서 욕심을 안 부린 결정입니다.
 
 ---
+
+## 06. Iceberg 필요성 ① — DW / Data Lake 의 한계
+
+> RDB·Parquet+Glue 만으론 시점성·갱신·스키마 진화 셋 다 잡기 어렵다.
+
+- DW (RDBMS) : 대용량 append 와 분석 쿼리 비용·확장성 한계
+- Plain Parquet + Glue : INSERT-only, 갱신 불가, snapshot 개념 없음
+- 종목 마스터 갱신 (액면분할·상폐) → row 수정 필요
+- BI 대시보드 일관성 → 부분 쓰기 노출 차단 필요
+
+**시각자료**: 3열 비교 매트릭스 — RDB vs Parquet+Glue vs Iceberg / 갱신·시점성·스키마 진화·OVERWRITE 원자성.
+
+**Speaker Note:**
+왜 Iceberg 가 필요했냐는 질문에 두 슬라이드를 씁니다.
+이 슬라이드는 "왜 다른 게 안 되나" 입니다.
+RDB 는 분당 수만 건 tick 을 받아 분석 쿼리까지 같이 받기엔 비용이 안 맞습니다.
+Plain Parquet + Glue 는 append 만 됩니다. 액면분할이 들어와서 종목 마스터의 par_value 를 수정해야 한다? row 수정이 불가능합니다.
+또 Gold 분봉 집계를 OVERWRITE 할 때 부분 쓰기가 BI 에 노출되면 대시보드가 깜빡입니다. 이 일관성을 RDB 트랜잭션처럼 보장해줄 게 plain Parquet 에는 없습니다.
+이 세 가지를 한 번에 푸는 게 Iceberg 의 ACID 트랜잭션과 snapshot 입니다.
+
+---
+
+## 07. Iceberg 필요성 ② — MERGE INTO / Time-travel 의 구체 시나리오
+
+> 액면분할·OVERWRITE 원자성·Audit Trail — 셋 다 코드에서 실제로 쓰인다.
+
+- 종목 마스터 MERGE : `silver_dim_symbol` 일일 MERGE (액면분할·상폐 반영)
+- Gold OVERWRITE 원자성 : `gold_symbol_vwap_1m` 분봉 재집계가 BI 사용자에게 부분 노출 X
+- Time-travel : `VERSION AS OF` 로 어제 분봉 재현 → audit / 정합성 검증
+- Athena 가 Iceberg v2 만 지원 → row-level delete 가능
+
+**시각자료**: 코드 한 컷 — `MERGE INTO silver_dim_symbol USING source ON …` 한 블록 + `SELECT * FROM gold VERSION AS OF <snapshot_id>` 한 블록.
+
+**Speaker Note:**
+구체적인 시나리오 세 가지입니다.
+첫째, 종목 마스터 MERGE. dim_symbol_daily DAG 가 04:00 KST 에 KIS REST 종목 마스터를 받아 silver_dim_symbol 테이블에 MERGE 합니다. 액면분할이나 상폐가 들어오면 par_value, is_active 가 row 단위로 업데이트됩니다.
+둘째, Gold OVERWRITE 원자성. silver_to_gold_vwap 이 10분마다 돌면서 분봉을 재집계합니다. 이 OVERWRITE 가 트랜잭션이 아니면 대시보드에 절반만 보이는 순간이 생깁니다. Iceberg 의 snapshot 교체로 이 순간이 사라집니다.
+셋째, Time-travel. 어제 17시 분봉이 이상하다는 BI 사용자 리포트가 들어오면 VERSION AS OF 로 그 시점 스냅샷을 직접 조회해서 audit 합니다. plain Parquet 으로는 못 합니다.
+이 셋이 코드에 실제로 들어가 있다는 점이 중요합니다. 추상적인 "있으면 좋은 기능" 이 아닙니다.
+
+---
