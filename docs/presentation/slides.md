@@ -372,3 +372,86 @@ DART 공시 타임라인은 최근 14일 공시 테이블입니다. 공시가 VW
 Grafana 와 역할을 나눴습니다. Grafana 는 시스템 헬스, Superset 은 데이터 품질과 비즈니스 KPI 입니다. Iceberg snapshot 추이 차트는 시간 여유 시 추가할 예정입니다.
 
 ---
+
+## 19. 운영 ① — Snapshot / Time-travel 활용
+
+> Iceberg snapshot 마다 BI 일관성 + audit 두 가치 — 어제 분봉 재현 가능.
+
+- 모든 Silver/Gold 쓰기 = 새로운 snapshot 생성
+- 사용 케이스 1 : BI 사용자 "어제 17시 분봉 이상" → `VERSION AS OF` 로 재현
+- 사용 케이스 2 : Compaction 결과 검증 → 전후 snapshot 비교
+- Athena : `SELECT * FROM …$snapshots` 로 snapshot 메타 직접 조회
+
+**시각자료**: Iceberg snapshot 타임라인 — Silver MERGE / Gold OVERWRITE / Compaction 각 스냅샷이 시간축에 점으로.
+
+**Speaker Note:**
+Iceberg 의 snapshot 은 두 가치를 동시에 줍니다.
+첫째, BI 일관성. 모든 쓰기가 새 snapshot 을 만들고, 읽기는 가장 최신 snapshot 만 봅니다. 그래서 OVERWRITE 중간 상태가 BI 에 노출되지 않습니다.
+둘째, audit. BI 사용자가 어제 17 시 분봉이 이상하다고 리포트하면 그 시점 snapshot 을 VERSION AS OF 로 직접 조회합니다. 코드 한 줄로 됩니다.
+Athena 는 `…$snapshots` 라는 메타 테이블을 자동으로 노출합니다. snapshot id, parent_id, committed_at, summary 가 그대로 조회됩니다.
+헬스 쿼리 6번이 바로 이 메타 테이블로 snapshot 누적을 모니터링합니다.
+Compaction 도 이 메커니즘 위에서 안전해집니다. 새 snapshot 으로 rewrite 된 결과를 만들고 atomic 하게 교체합니다.
+
+---
+
+## 20. 운영 ② — Rollback 활용 원칙
+
+> "Rollback 이 자주 일어난다면 파이프라인 설계가 잘못된 건 아닐지 의심해보자."
+
+- 절차 : Athena `CALL iceberg.system.rollback_to_snapshot(<table>, <snapshot_id>)`
+- 사용 케이스 : Gold OVERWRITE 직후 데이터 결손 발견 → 직전 snapshot 으로 rollback
+- 원칙 : Rollback 은 emergency 도구, 일상 도구가 아님
+- 잦은 rollback = 사전 검증 부재 → 검증 쿼리·DQ 체크 강화로 대응
+
+**시각자료**: rollback 절차 다이어그램 + 경고 박스 ("자주 일어나면 설계 의심").
+
+**Speaker Note:**
+Rollback 슬라이드는 두 메시지입니다.
+첫째, 실제 절차. Athena 에서 system.rollback_to_snapshot 프로시저를 호출합니다. 한 줄입니다.
+둘째, 이게 핵심인데, Rollback 이 자주 일어난다면 파이프라인 설계가 잘못된 건 아닐지 의심해야 합니다.
+Rollback 은 emergency 도구입니다. 일상적으로 의존하면 그건 사전 검증이 부족하다는 신호입니다.
+그래서 저는 Rollback 을 만들어 두되, 검증 쿼리 4 종과 데이터 퀄리티 체크를 강화해서 Rollback 이 필요한 상황 자체를 줄이는 데 집중했습니다.
+지금까지 Phase 1 운영 중 Rollback 호출 횟수는 <TODO: 실측 횟수> 입니다.
+
+---
+
+## 21. 운영 ③ — Expire Snapshots 정책
+
+> 30일 보존 + 최소 5 snapshot 유지 — 주 1회 일요일 19:00 KST, Iceberg 자동화 #2.
+
+- 정책 : `expire_snapshots(older_than=30d, retain_last=5)` — Iceberg 가 보수적인 쪽 적용
+- 스케줄 : 일요일 19:00 KST (`0 19 * * SUN`) — 장 마감 후 retention window
+- 대상 : silver_kis_tick_clean / silver_dart_disclosure_clean / gold_symbol_vwap_1m
+- Compaction 과 짝 : file 병합(평일 18:00) + metadata 정리(일요일 19:00)
+
+**시각자료**: 정책 표 — 파라미터 / 값 / 근거 + Compaction–Expire 짝 타임라인.
+
+**Speaker Note:**
+Expire Snapshots 는 Iceberg 자동화의 두 번째입니다. 첫 번째 Compaction 과 짝을 이룹니다.
+정책은 30일 이전 snapshot 을 정리하되 최소 5개는 무조건 유지합니다. Iceberg 가 older_than 과 retain_last 중 보수적인 쪽을 적용해서, retention 이 짧아도 최근 5개는 절대 안 지웁니다. Rollback 과 Time-travel 윈도우를 보장하기 위해서입니다.
+스케줄은 주 1회 일요일 19:00 KST 입니다. 평일이 아닌 이유는 snapshot 정리가 자주 필요한 작업이 아니고, 주말 장 마감 시간대가 Spark 리소스가 가장 한가하기 때문입니다.
+대상은 Iceberg 테이블 셋입니다. silver_kis_tick_clean, silver_dart_disclosure_clean, gold_symbol_vwap_1m.
+Compaction 은 평일 18:00 에 파일을 병합하고, Expire 는 일요일 19:00 에 메타데이터를 정리합니다. 둘이 합쳐져야 storage 와 query plan 이 둘 다 최적화됩니다.
+한 테이블 expire 가 실패해도 다음 테이블로 넘어가도록 WARN 처리해서, 한 번의 실패가 전체를 막지 않습니다.
+
+---
+
+## 22. 운영 ④ — Remove Orphan + Compaction (쿼리 플랜)
+
+> Compaction target 384MB, band 256–512MB — 쿼리 플랜의 file scan 수 감소가 측정 가능.
+
+- Compaction : `rewrite_data_files(target=384MB, min=256MB, max=512MB)`
+- Min-files 변수 분리 : 하드코딩 X, 함수 인자로 (`code/pipelines/silver/iceberg_compaction.py`)
+- Orphan files : 18:00 KST 평일 Compaction 후 별도 cleanup 검토 (Phase 1.5)
+- 효과 : 쿼리당 file scan 수 N → N/M 감소 → Athena 비용·지연 모두 감소
+
+**시각자료**: before/after 비교 — file count 100 → 12, scan time 변화. `<TODO: 실측값>`
+
+**Speaker Note:**
+Compaction 은 Iceberg 매니지먼트의 핵심입니다.
+설정은 target 384MB, min 256MB, max 512MB 입니다. 너무 작은 파일은 검색이 비효율적이고, 너무 큰 파일은 partial scan 이 어렵습니다. 그 사이 sweet spot 입니다.
+중요한 코드 컨벤션 하나가 min/max/target 을 함수 인자로 받는다는 점입니다. 하드코딩하지 않고 변수로 분리해서, Silver 와 Gold 가 같은 함수에 다른 값을 줄 수 있습니다.
+Orphan files cleanup 은 Phase 1.5 로 미뤘습니다. 운영 초기에 orphan 이 거의 안 쌓이는 게 측정되었기 때문입니다.
+효과는 쿼리 플랜에서 측정됩니다. file scan 수가 줄면 Athena 비용과 지연이 둘 다 떨어집니다. 실측값은 발표 직전 캡처합니다.
+
+---
