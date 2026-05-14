@@ -47,3 +47,9 @@ dist/
 build/
 .coverage
 htmlcov/
+
+# 녹화 영상 (발표 시연용 — git 커밋 금지)
+*.mp4
+*.mov
+docs/superpowers/recordings/*.mp4
+docs/superpowers/recordings/*.mov

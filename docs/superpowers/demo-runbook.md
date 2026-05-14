@@ -14,6 +14,55 @@ bash infra/scripts/smoke_check.sh
 
 **비영업일 (5/16 토)** = `[3] kis_ws_connected=0` 과 `[4] no bronze for today` 는 알려진 WARN. 그 외 모두 OK 면 진행.
 
+## 영업시간 녹화 shot-list (5/14, 5–8분)
+
+> 5/16 발표는 비영업일 — 이 녹화가 "장중 라이브 시스템" 증거. 09:00–15:30 KST 안에 촬영.
+> 사전: `bash infra/scripts/smoke_check.sh` → ALL CLEAR 확인 후 시작.
+
+**Segment 1 — KIS Producer 실시간 (1분)**
+```bash
+docker logs -f tickberg-kis-producer        # 실시간 tick 파싱 로그
+curl -s localhost:9100/metrics | grep '^kis_'   # ws_connected=1, publish 누적
+```
+narration: "한국투자증권 WebSocket — 삼성전자/SK하이닉스/NAVER 실시간 체결 수신, parse_errors=0"
+
+**Segment 2 — Grafana 대시보드 (1.5분)**
+- http://localhost:3000 → `tickberg-1a` (1차 운영 패널) → `tickberg-1b` (풍부화 패널)
+- 보여줄 것: `ws_connected=1`, symbol별 publish rate 실시간 상승, Kafka topic in rate, parse errors stat
+- narration: "운영 가시성 T1 — Prometheus 메트릭 기반 시스템 헬스. Grafana = 시스템, Superset = 데이터 품질로 역할 분리"
+
+**Segment 3 — Airflow DAG (1.5분)**
+- http://localhost:8080 (admin/admin) → DAGs 목록
+- 보여줄 것: 6 DAG (bronze_to_silver_kis / silver_to_gold_vwap / dim_symbol_daily / iceberg_compaction / expire_snapshots / dart_ingest_daily) 모두 unpaused, `silver_to_gold_vwap` graph view (ExternalTaskSensor 체인), 최근 success run
+- narration: "메달리온 파이프라인 오케스트레이션 — 30분 주기 batch + 일배치 (dim_symbol 04:00, DART 06:00, compaction 18:00, expire 일요일 19:00)"
+
+**Segment 4 — Athena 라이브 쿼리 (2분)**
+AWS Athena 콘솔 (workgroup `tickberg-wg`) 에서 순차 실행:
+```sql
+-- Bronze 최신 적재
+SELECT max(ingest_ts) AS latest, count(*) AS n
+FROM tickberg.bronze_kis_tick_raw WHERE dt = current_date;
+
+-- Gold VWAP — Bronze→Silver→Gold 메달리온 통과 결과
+SELECT symbol, ts_minute, vwap, total_volume, trade_count
+FROM tickberg.gold_symbol_vwap_1m
+ORDER BY ts_minute DESC LIMIT 10;
+
+-- Iceberg MERGE 이력 (time-travel audit)
+SELECT committed_at, operation
+FROM "tickberg"."silver_kis_tick_clean$snapshots"
+ORDER BY committed_at DESC LIMIT 5;
+```
+narration: "Bronze(Parquet)→Silver(Iceberg MERGE)→Gold(Iceberg OVERWRITE). snapshot 이력 = audit trail"
+
+**Segment 5 — 5분 헬스체크 (1분)**
+```bash
+bash infra/scripts/smoke_check.sh           # 8단계 ALL CLEAR
+```
+narration: "운영자가 5분 안에 헬스체크 — 컨테이너·Kafka·KIS·Bronze·DAG·Athena·Grafana·Prometheus"
+
+녹화 산출물 → `docs/superpowers/recordings/2026-05-14-market-hours.mp4` (git 커밋 X — `.gitignore`)
+
 ## 발표 흐름 (10–12분, slide 33장)
 
 | # | 시간 | 내용 | 자료 |

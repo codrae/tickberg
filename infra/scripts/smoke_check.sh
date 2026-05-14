@@ -63,7 +63,7 @@ fi
 echo
 echo "[5] Airflow DAGs unpaused"
 for dag in bronze_to_silver_kis silver_to_gold_vwap dim_symbol_daily \
-           iceberg_compaction dart_ingest_daily; do
+           iceberg_compaction expire_snapshots dart_ingest_daily; do
   state=$(docker exec tickberg-airflow-scheduler airflow dags details "$dag" \
             2>/dev/null | grep -E '^is_paused\b' | awk '{print $3}' || echo "?")
   case "$state" in
