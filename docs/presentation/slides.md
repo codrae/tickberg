@@ -149,3 +149,64 @@ Plain Parquet + Glue 는 append 만 됩니다. 액면분할이 들어와서 종�
 이 셋이 코드에 실제로 들어가 있다는 점이 중요합니다. 추상적인 "있으면 좋은 기능" 이 아닙니다.
 
 ---
+
+## 08. Bronze 스키마 — 왜 Parquet (Iceberg 아님)
+
+> 13컬럼 Parquet + Glue Partition Projection — streaming snapshot 오버헤드 차단.
+
+- 컬럼 : ingest_ts / kafka_partition·offset / symbol / trade_ts_kst / price / volume / cum_volume·amount / trade_side / best_ask·bid / raw_payload
+- 파티션 : `dt date, hr int` (Glue Partition Projection — MSCK REPAIR 불필요)
+- 1 minute micro-batch append-only, dedup 은 Silver 책임
+- Iceberg 미선택 사유 : snapshot/manifest 갱신이 streaming 에서 순수 오버헤드
+
+**시각자료**: DDL 한 컷 (kis_tick_raw.sql) — partition projection 부분 강조.
+
+**Speaker Note:**
+Bronze 는 13컬럼 Parquet 입니다.
+원본 페이로드 raw_payload 와 함께 파싱된 12개 필드를 모두 들고 있어서 디버깅이 쉽습니다.
+파티션은 dt 와 hr 두 개입니다. Glue Partition Projection 으로 메타데이터를 매번 갱신하지 않아도 Athena 가 알아서 경로를 만들어 줍니다. MSCK REPAIR 불필요합니다.
+trigger 는 1분 micro-batch 입니다. 분당 한 번 S3 에 Parquet 을 떨굽니다.
+dedup 은 Bronze 가 안 합니다. Bronze 는 원본 보존만 책임지고, 중복 제거는 Silver MERGE 에서 한 번에 처리합니다. 책임을 한 군데로 모아 두면 디버깅이 쉽습니다.
+Iceberg 가 아닌 이유는 한 가지로 압축됩니다. 매분 snapshot 과 manifest 를 갱신해야 하는데 그게 순수 오버헤드입니다. Iceberg 가 주는 가치 (MERGE, Time-travel) 가 Bronze 에는 필요 없습니다.
+
+---
+
+## 09. Silver 스키마 — Iceberg COW 수용, MOR 전환 트리거 명시
+
+> 12컬럼 Iceberg, hour partition, COW 기본값 수용 — write amplification 측정 시 MOR 전환.
+
+- 컬럼 : trade_uid (dedup 키) / symbol / trade_ts_{kst,utc} / price / volume / trade_amount / side / best_ask·bid / ingest_ts / silver_ts
+- 파티션 : `hour(trade_ts_kst)` (Iceberg 자체 표현식)
+- DDL = Athena → `format-version=2`, `write.merge.mode=…` 등 일부 키 거부 → COW 기본값 사용
+- MOR 전환 트리거 : MERGE 시 partition rewrite 비용 임계 초과 시 Spark bootstrap
+
+**시각자료**: DDL 한 컷 (kis_tick_clean.sql) + COW vs MOR 비교 미니 표.
+
+**Speaker Note:**
+Silver 는 12컬럼 Iceberg 입니다.
+파티션은 hour(trade_ts_kst) 로 Iceberg 의 hidden partitioning 을 씁니다. trade_ts_kst 가 들어오면 Iceberg 가 알아서 시간 파티션에 떨궈줍니다.
+dedup 키는 trade_uid 입니다. Bronze 에서 kafka_partition + offset + symbol + trade_ts_kst 를 조합해 만든 결정적 키로, MERGE 의 ON 조건이 됩니다.
+한 가지 trade-off 가 있습니다. DDL 을 Athena 에서 실행하다 보니 format-version=2 와 write.merge.mode 같은 Iceberg 네이티브 키 일부가 거부됩니다. 그래서 Phase 1 은 COW 기본값을 그대로 수용했습니다.
+MERGE 시 partition rewrite 비용이 측정상 문제가 되면 Spark 로 ALTER TABLE 해서 MOR 로 전환할 계획입니다. 이건 100x 사고력 슬라이드에서 다시 다룹니다.
+
+---
+
+## 10. Gold 스키마 — OVERWRITE + 1분봉 일괄집계
+
+> 10컬럼 Iceberg, OVERWRITE 원자성 — 증분집계 X, 일괄집계 O.
+
+- 컬럼 : symbol / ts_minute / open·close·high·low_price / total_volume / vwap / trade_count / computed_at
+- 파티션 : `hour(ts_minute)` (Iceberg)
+- 집계 : Silver 에서 GROUP BY symbol, minute → VWAP / OHLC 일괄 OVERWRITE (마지막 N 시간)
+- 증분 안 한 이유 : 분봉이 늦게 도착한 tick 으로 재집계되어야 함 → 일괄이 단순하고 정확
+
+**시각자료**: DDL + 집계 SQL 한 컷 — `INSERT OVERWRITE … GROUP BY symbol, date_trunc('minute', trade_ts_kst)`
+
+**Speaker Note:**
+Gold 는 10컬럼 Iceberg 분봉입니다.
+한 분 단위로 symbol 별 OHLC, VWAP, 거래량, 거래대금, tick 카운트를 집계합니다.
+중요한 결정 한 가지가 있습니다. 증분집계가 아니라 일괄집계입니다. 마지막 N 시간 윈도우를 통째로 다시 계산해서 OVERWRITE 합니다.
+이유는 두 가지인데, 첫째, 늦게 도착한 tick 이 있으면 그 분의 VWAP 가 다시 계산되어야 정확합니다. 둘째, 증분이 더 복잡하고 디버깅이 어렵습니다. 분당 데이터 규모가 작아서 일괄을 감당할 수 있다는 게 일괄을 고른 핵심 근거입니다.
+Phase 2 에서 일 1억 tick 규모가 되면 이 결정을 다시 봐야 합니다. 윈도우 증분 OVERWRITE 로 갈 수도 있고, Flink streaming 으로 갈 수도 있습니다.
+
+---
