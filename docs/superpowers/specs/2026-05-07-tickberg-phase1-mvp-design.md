@@ -579,35 +579,47 @@ KafkaProducer(
 
 ### 6.7 비용 추정 — worst case (보수적)
 
-**Phase 1 데모기간 (영업일 ~7일)**:
+> **BI 도구 변경 반영**: QuickSight 폐기 → Apache Superset (로컬 Docker). QuickSight
+> Author license $24/월 비용이 사라져 Phase 1 worst case 가 spec 초안 대비 크게 감소.
+> 상세 분석은 `docs/architecture/100x-scale.md` §8 참조.
 
-| 서비스 | 보수 가정 | 비용 |
-|---|---|---|
-| S3 storage | 압축 효율 2x 보수 + Iceberg metadata 누적 5x → ~10 GB (3종목 baseline) | $0.25/월 |
-| S3 PUT/GET | Iceberg commit + Spark checkpoint = ~5K PUT/일 × 7일 (file 수는 종목 수와 무관) | $0.20 |
-| Athena query | 디버깅 부주의 scan = 5 GB scan/주 | $0.03 |
-| Glue Catalog | 무료 한도 안 | $0 |
-| QuickSight | Author license 필요 (대시보드 작성). Standard Author $24/user/월 (1명 가정). 첫 30일 free trial 만료 가정 | $24 |
-| Cross-AZ data transfer | QuickSight ↔ Athena | $0.50 |
-| **Phase 1 worst case** | | **~$24–26/월** (S3 비중 작아져 약간 감소) |
+**Phase 1 데모기간 (영업일 ~7일)** — best / worst:
 
-**100x (3억 trades/day) — worst case**:
+| 서비스 | best | worst | 보수 가정 |
+|---|---|---|---|
+| S3 storage | $0.10 | $0.25 | 압축 2x + Iceberg metadata 5x → ~10 GB |
+| S3 PUT/GET | $0.05 | $0.20 | Iceberg commit + Spark checkpoint ~5K PUT/일 × 7일 |
+| Athena query | $0.01 | $0.10 | 디버깅 부주의 scan 5 GB/주 worst |
+| Glue Catalog | $0 | $0 | 무료 한도 안 |
+| Superset compute | $0 | $5 | 로컬 Docker (발표 외 정지). EC2 t3.small 대안 시 ~$10 |
+| Grafana | $0 | $0 | 로컬 Docker |
+| Cross-AZ transfer | $0 | $0.50 | Spark ↔ S3 (같은 region) |
+| **Phase 1 합계** | **~$0.16/월** | **~$6/월** | budget $20 alarm **미초과** |
 
-| 카테고리 | 월 비용 |
-|---|---|
-| EMR Serverless 컴퓨트 | $1,300–2,700 |
-| MSK Serverless | $50–100 |
-| S3 storage (1.5 TB) + PUT | $145 |
-| QuickSight Enterprise (5 users mix Author/Reader) | $100–160 |
-| Athena scan (1 TB/월) | $5 |
-| Glue 유료 | $2 |
-| **100x worst case 합계** | **$1,600–3,100/월** |
+**100x (1억 trades/day) — best / worst**:
 
-> **가격 disclaimer**: 위 추정은 2026 AWS ap-northeast-2 공시 가격 기준. QuickSight Author/Reader mix, EMR Serverless DPU·시간, SPICE 사용량에 따라 ±30% 변동 가능. worst case framing 자체가 핵심.
+| 카테고리 | best | worst | 가정 |
+|---|---|---|---|
+| EMR Serverless 컴퓨트 | $400 | $2,700 | best = 영업시간만 on-demand, worst = 24h on |
+| MSK Serverless | $50 | $100 | broker 1→3, RF=3 |
+| S3 storage (1.5 TB) + PUT | $50 | $225 | best = Glacier IR aggressive, worst = Standard 유지 |
+| Athena scan | $1 | $50 | best = Gold 사전집계, worst = 디버깅 scan |
+| Glue 유료 | $2 | $5 | 무료 한도 초과 |
+| Superset compute (Fargate) | $20 | $50 | best = 단일 task, worst = HA 2 task + Redis |
+| Grafana 셀프호스트 | $5 | $30 | EBS + scrape 부담 |
+| Cross-AZ transfer | $5 | $50 | EMR ↔ S3, multi-AZ MSK |
+| **100x 합계** | **~$533/월** | **~$3,210/월** | budget $20 의 26–160x 초과 |
+
+> **가격 disclaimer**: 2026 AWS ap-northeast-2 공시 가격 기준. EMR Serverless DPU·시간,
+> MSK 처리량, Superset Fargate 시간당 과금에 따라 ±30% 변동 가능. worst case framing 이 핵심.
 
 **핵심 메시지**:
-- Phase 1 worst case ($25–27/월) 도 **AWS Budgets $20 alarm을 살짝 초과** → 첫 month에서 alarm 트리거 → narrative ("budget alarm 동작 검증" 으로 활용)
-- 100x worst case ($1,600–3,100/월) → budget **80–155x 초과**. "깨지는 곳은 storage가 아니라 컴퓨트 + QuickSight license". budget 10–100x 늘리거나 EMR Serverless on-demand 컴퓨트로 영업시간만 가동, QuickSight reader/author mix 최적화
+- Phase 1 worst case (~$6/월) 는 **AWS Budgets $20 alarm 미초과** — QuickSight 폐기 효과.
+  budget alarm 동작 검증은 인위 burst test (대용량 `aws s3 cp` 등) 또는 budget 임계값을
+  $5 로 낮춰 수행. (spec 초안의 "Phase 1 worst case 가 alarm 살짝 초과" narrative 폐기)
+- 100x worst case ($533–3,210/월) → budget **26–160x 초과**. **깨지는 곳은 storage 가 아니라
+  EMR Serverless 컴퓨트** (worst case 의 60–84%). EMR on-demand 로 영업시간만 가동 시 컴퓨트
+  ~60% 절감. budget 자체를 100x 늘리거나 알람 임계값 재정의 필요.
 
 ### 6.8 Secret management
 
