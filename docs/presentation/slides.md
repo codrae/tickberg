@@ -50,10 +50,10 @@ KPI 는 Bronze lag 2분 이내, Silver dedup 비율 0.95 이상, Gold 분봉 결
 
 > KIS WebSocket (실시간 tick) + DART (공시) + 신용정보원 (월별 증강) 3종.
 
-- KIS Open API : WebSocket H0STCNT0 46-field, 분당 <TODO: 실측 tick/min>, REST 종목 마스터
+- KIS Open API : WebSocket H0STCNT0 46-field, 분당 ~1,000 tick (5/14 실측, 3종목 합산), REST 종목 마스터
 - DART 공시 : 평일 일배치 06:00 KST, 분기 재무제표 + 주요공시
 - 신용정보원 : 월 1회 xlsx, 신용위험 지표 (증강)
-- EDA 결과 : 종목당 일평균 tick <TODO>, 가격 분포 <TODO>, 결측 패턴 <TODO>
+- EDA 결과 (5/14 실측) : 일 tick 삼성 24만·하이닉스 14만·NAVER 2만, 가격대 종목별 21만~196만원, 결측 패턴 = 저거래 종목 분 단위 sparse (NAVER 50/min) → Gold 분봉 결손 체크 설계
 
 **시각자료**: 3열 비교표 — Source / 갱신 주기 / 페이로드 / Phase 1 활용 지점.
 
@@ -62,7 +62,7 @@ KPI 는 Bronze lag 2분 이내, Silver dedup 비율 0.95 이상, Gold 분봉 결
 첫째, 한국투자증권 Open API. 실시간 WebSocket 으로 H0STCNT0 라는 46개 필드 체결 데이터를 받고, REST 로 종목 마스터를 가져옵니다.
 둘째, DART 공시 API. 평일 아침 6시에 일배치로 분기 재무제표와 주요공시를 끌어옵니다. 장 시간에 돌리지 않는 이유는 자원을 KIS 스트리밍에 양보하기 위해서입니다.
 셋째, 신용정보원 데이터. 월별 xlsx 라 batch 한 번이면 충분해서 증강 용도로만 씁니다.
-EDA 결과 수치는 발표 직전 Athena 조회로 채워 넣을 예정입니다. 일평균 tick 수와 분포, 그리고 결측 패턴 세 가지를 살펴보고 Silver dedup 룰을 설계했습니다.
+EDA 결과는 5/14 영업일 실측입니다. 일 tick 수, 가격 분포, 그리고 종목 간 거래량 편차를 살펴봤습니다. 삼성전자가 분당 600 tick 을 넘는 반면 NAVER 는 50 tick 수준으로 약 12배 차이가 납니다. 이 편차 때문에 저거래 종목은 분 단위로 비어 있는 구간이 생겨서, Gold 분봉 결손 체크를 검증 쿼리 4번에 넣었습니다.
 
 ---
 
@@ -353,7 +353,7 @@ Phase 2 에서는 Great Expectations 나 Soda 같은 데이터 퀄리티 프레�
 - 종목별 거래량 점유율 (Pie) : 영업일 1일 누적 거래량 점유율
 - 데이터 출처 : `tickberg.gold_symbol_vwap_1m` (Athena via Superset)
 
-**시각자료**: KPI 탭 스크린샷 placeholder — VWAP 라인 + 거래량 바 + 점유율 파이 3 chart. `<TODO: 실측 스샷 추가>`
+**시각자료**: KPI 탭 스크린샷. **캡처 방법**: `docker compose -f infra/docker/docker-compose.yml up -d superset` → http://localhost:8088 (admin/admin) → `dashboard/superset/setup.md` 대로 Athena 연결 + KPI 탭 3 chart (VWAP 라인 / 거래량 바 / 점유율 파이) 생성 후 캡처. Superset UI 셋업이 선행 작업.
 
 **Speaker Note:**
 비즈니스 KPI 탭은 세 차트로 구성했습니다.
@@ -374,7 +374,7 @@ VWAP 추세는 종목별 1분봉 VWAP 의 시계열입니다. gold 테이블과 
 - Silver Throughput per 5min (24h) : 영업시간 패턴 시각화 (09:00 급상승 / 15:30 종료)
 - DART 공시 타임라인 (Table) : 최근 14일 공시, VWAP·거래량과 cross-reference
 
-**시각자료**: 운영 탭 스크린샷 placeholder — 4 chart grid. `<TODO: 실측 스샷 추가>`
+**시각자료**: 운영 탭 스크린샷. **캡처 방법**: Superset (위 17번과 동일 셋업) → 운영 탭 4 chart grid (Bronze freshness / Symbol coverage / Silver throughput / DART 타임라인) 생성 후 캡처.
 
 **Speaker Note:**
 운영 탭은 평가 4축의 운영 가시성에 정면으로 답하는 슬라이드입니다.
@@ -424,7 +424,7 @@ Rollback 슬라이드는 두 메시지입니다.
 둘째, 이게 핵심인데, Rollback 이 자주 일어난다면 파이프라인 설계가 잘못된 건 아닐지 의심해야 합니다.
 Rollback 은 emergency 도구입니다. 일상적으로 의존하면 그건 사전 검증이 부족하다는 신호입니다.
 그래서 저는 Rollback 을 만들어 두되, 검증 쿼리 4 종과 데이터 퀄리티 체크를 강화해서 Rollback 이 필요한 상황 자체를 줄이는 데 집중했습니다.
-지금까지 Phase 1 운영 중 Rollback 호출 횟수는 <TODO: 실측 횟수> 입니다.
+지금까지 Phase 1 운영 중 rollback_to_snapshot 호출 횟수는 0 입니다. 5/14 에 timezone 버그로 Silver 데이터가 9시간 어긋난 사고가 있었지만, 그것도 rollback 이 아니라 잘못된 row 를 DELETE 하고 Bronze 에서 재 MERGE 하는 방식으로 복구했습니다. 원본 Bronze 가 append-only 로 보존돼 있어서 재처리가 가능했기 때문입니다. rollback 이 0회라는 건 사전 검증이 작동하고 있다는 신호입니다.
 
 ---
 
@@ -458,7 +458,7 @@ Compaction 은 평일 18:00 에 파일을 병합하고, Expire 는 일요일 19:
 - Orphan files : 18:00 KST 평일 Compaction 후 별도 cleanup 검토 (Phase 1.5)
 - 효과 : 쿼리당 file scan 수 N → N/M 감소 → Athena 비용·지연 모두 감소
 
-**시각자료**: before/after 비교 — file count 100 → 12, scan time 변화. `<TODO: 실측값>`
+**시각자료**: before/after 비교. 5/14 실측 — compaction 이 silver_kis_tick_clean 의 small-file 16개를 병합 (rewritten_data_files_count=16). 단 Phase 1 데이터량이 작아 (silver 총 11.5MB / 55 files / avg 0.21MB) target 256MB 엔 미도달 — file 병합 효과는 100x 에서 유의미 (health-query 07 verdict 와 일관).
 
 **Speaker Note:**
 Compaction 은 Iceberg 매니지먼트의 핵심입니다.
@@ -520,7 +520,7 @@ Iceberg 가 ACID 트랜잭션을 주지만 그게 자동으로 모든 충돌을 
 - Alert 6종 : WebSocket Down / Parse error spike·burst / Token refresh fail·trend / Broker rate mismatch
 - Grafana 대시보드 : `tickberg-1a` `tickberg-1b` — 장애 인지 5분 이내 목표
 
-**시각자료**: Grafana 대시보드 스크린샷 placeholder + Prometheus scrape 토폴로지. `<TODO: 실측 스샷>`
+**시각자료**: Grafana 대시보드 스크린샷 + Prometheus scrape 토폴로지. **캡처 방법**: http://localhost:3000 (admin/admin) → `tickberg-1a` / `tickberg-1b` 대시보드 캡처. 또는 5/14 영업시간 녹화 (`docs/superpowers/recordings/`) 의 Grafana 구간에서 추출.
 
 **Speaker Note:**
 모니터링은 Prometheus 와 Grafana 입니다. 15초 간격으로 scrape 합니다.
@@ -649,7 +649,7 @@ AI 활용 방법론은 한 가지 원칙입니다. 절대 코드부터 짜지 �
 > dbt / 자동매매 (가설) / EMR Serverless / MSK — 트리거 조건 명시.
 
 - dbt Semantic Layer : 비즈니스 정의 (VWAP, 거래대금) 변경 빈도가 월 1+ 회 도달 시
-- 자동매매 (가설) : Gold VWAP 기반 신호 → 백테스트 수익률 <TODO> → 라이브 검증
+- 자동매매 (가설) : Gold VWAP 기반 신호 → 백테스트 (Phase 2 수행) → 라이브 검증 — Phase 1 발표는 수익성 숫자 미약속
 - EMR Serverless : 일 1 천만 tick 또는 Spark Standalone 단일 노드 OOM 시
 - MSK : Kafka 처리량 100MB/s 도달 또는 RF=3 필요 시
 
