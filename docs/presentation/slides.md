@@ -465,7 +465,7 @@ Compaction 은 Iceberg 매니지먼트의 핵심입니다.
 설정은 target 384MB, min 256MB, max 512MB 입니다. 너무 작은 파일은 검색이 비효율적이고, 너무 큰 파일은 partial scan 이 어렵습니다. 그 사이 sweet spot 입니다.
 중요한 코드 컨벤션 하나가 min/max/target 을 함수 인자로 받는다는 점입니다. 하드코딩하지 않고 변수로 분리해서, Silver 와 Gold 가 같은 함수에 다른 값을 줄 수 있습니다.
 Orphan files cleanup 은 Phase 1.5 로 미뤘습니다. 운영 초기에 orphan 이 거의 안 쌓이는 게 측정되었기 때문입니다.
-효과는 쿼리 플랜에서 측정됩니다. file scan 수가 줄면 Athena 비용과 지연이 둘 다 떨어집니다. 실측값은 발표 직전 캡처합니다.
+효과는 쿼리 플랜에서 측정됩니다. file scan 수가 줄면 Athena 비용과 지연이 둘 다 떨어집니다. 5/14 실측으로는 silver 의 small-file 16개가 한 번의 compaction 으로 병합됐습니다. 다만 솔직하게 짚으면, Phase 1 은 데이터량이 작아서 — silver 전체가 11.5MB 수준 — target 256MB 에는 한참 못 미칩니다. file 병합의 진짜 효과는 100x 규모에서 드러납니다. 이건 health-query 7번의 verdict 와도 일관됩니다.
 
 ---
 
