@@ -27,3 +27,13 @@ def build_batch_session(app_name: str) -> SparkSession:
     spark.sparkContext.setLogLevel("WARN")
     spark.sparkContext.setLocalProperty("spark.scheduler.pool", "batch_pool")
     return spark
+
+
+def split_catalog(table: str) -> tuple[str, str]:
+    """`catalog.schema.table` 식별자를 `(catalog, schema.table)` 로 분리.
+
+    Iceberg stored procedure 호출용 — `CALL {catalog}.system.xxx(table =>
+    '{qualified}')`. compaction·expire_snapshots 가 공통으로 사용.
+    """
+    parts = table.split(".")
+    return parts[0], ".".join(parts[1:])

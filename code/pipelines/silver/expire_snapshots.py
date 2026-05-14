@@ -6,9 +6,14 @@ Compaction 과 짝 — file 병합 + metadata 정리 = storage·query 최적화.
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from pyspark.sql import SparkSession
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _spark import build_batch_session, split_catalog  # noqa: E402
 
 
 def expire(spark: SparkSession, *, table: str, retention_days: int,
@@ -18,8 +23,7 @@ def expire(spark: SparkSession, *, table: str, retention_days: int,
     Iceberg 가 retain_last 와 older_than 중 보수적인 쪽을 적용 — 즉 retain_last
     개수는 절대 보장. retention_days 가 짧아도 retain_last 5는 유지.
     """
-    catalog = table.split(".")[0]
-    qualified = ".".join(table.split(".")[1:])
+    catalog, qualified = split_catalog(table)
     older_than = (datetime.now() - timedelta(days=retention_days)).strftime("%Y-%m-%d %H:%M:%S")
     spark.sql(f"""
       CALL {catalog}.system.expire_snapshots(
@@ -40,11 +44,6 @@ def main() -> None:
     p.add_argument("--retention-days", type=int, default=30)
     p.add_argument("--retain-last", type=int, default=5)
     args = p.parse_args()
-
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from _spark import build_batch_session
 
     spark = build_batch_session("expire_snapshots")
 

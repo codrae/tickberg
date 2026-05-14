@@ -5,8 +5,13 @@ Spec §4.2 — 18:00 KST MON-FRI. Silver/Gold target 384MB (256–512MB band).
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 
 from pyspark.sql import SparkSession
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _spark import build_batch_session, split_catalog  # noqa: E402
 
 
 def compact_table(
@@ -21,8 +26,7 @@ def compact_table(
 
     Returns map of metrics from the procedure call (rewritten_data_files_count etc).
     """
-    catalog = table.split(".")[0]
-    qualified = ".".join(table.split(".")[1:])
+    catalog, qualified = split_catalog(table)
     sql = f"""
       CALL {catalog}.system.rewrite_data_files(
         table => '{qualified}',
@@ -49,11 +53,6 @@ def main() -> None:
     )
     p.add_argument("--target-mb", type=int, default=384)
     args = p.parse_args()
-
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from _spark import build_batch_session
 
     spark = build_batch_session("iceberg_compaction")
     target = args.target_mb * 1024 * 1024
