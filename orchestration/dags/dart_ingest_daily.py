@@ -1,7 +1,8 @@
 """DART 공시 일배치 — 06:00 KST MON-FRI.
 
-전 영업일 공시 list 를 Bronze 적재. spark-master 컨테이너의 env (env_file: .env)
-에 DART_API_KEY 가 이미 있어 Airflow Variables 불필요.
+전 영업일 공시 list 를 Bronze 적재 후 Silver MERGE.
+spark-master 컨테이너의 env (env_file: .env) 에 DART_API_KEY 가 있어
+Airflow Variables 불필요.
 """
 from __future__ import annotations
 
@@ -24,12 +25,21 @@ with DAG(
     start_date=datetime(2026, 5, 11, 6, 0),
     catchup=False,
     max_active_runs=1,
-    tags=["bronze", "dart", "after-hours"],
+    tags=["bronze", "silver", "dart", "after-hours"],
 ) as dag:
-    BashOperator(
+    bronze_ingest = BashOperator(
         task_id="dart_disclosure_ingest",
         bash_command=spark_submit_command(
             "/opt/spark/code/pipelines/bronze/dart_disclosure_ingest.py",
             "--symbols", "005930,000660,035420",
         ),
     )
+    silver_merge = BashOperator(
+        task_id="dart_silver_merge",
+        bash_command=spark_submit_command(
+            "/opt/spark/code/pipelines/silver/dart_silver_merge.py",
+            "--days-back", "2",
+        ),
+    )
+
+    bronze_ingest >> silver_merge
