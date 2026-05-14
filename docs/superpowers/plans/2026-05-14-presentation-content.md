@@ -831,42 +831,44 @@ dim_symbol 은 다릅니다. 일 1회 MERGE 만 도는 종목 마스터라 row �
 
 ## 24. 운영 ⑥ — 동시성 충돌 회피 패턴
 
-> Streaming + batch + Compaction 이 동시에 도는데 conflict 가 안 나는 이유.
+> Streaming·MERGE·Compaction·Expire 가 같은 테이블을 건드려도 conflict 가 안 나는 이유.
 
-- Iceberg snapshot isolation : 각 writer 가 base snapshot 기반으로 새 snapshot 생성
-- 충돌 조건 : 같은 partition 을 동시에 rewrite 할 때 (Compaction vs MERGE)
-- 회피 패턴 1 : Compaction 18:00 평일 = Streaming/MERGE 가 도지 않는 시간대
-- 회피 패턴 2 : Silver MERGE retry — conflict 시 자동 재시도 (max=3)
+- Iceberg snapshot isolation : 각 writer 가 base snapshot 기반 새 snapshot atomic 생성
+- 시간대 분리 : MERGE/OVERWRITE 평일 09–16 / Compaction 평일 18:00 / Expire 일요일 19:00
+- `max_active_runs=1` : 같은 DAG 의 run 이 절대 겹치지 않음 (연속 MERGE 중첩 차단)
+- DAG `retries=2` (retry_delay 1분) : 일시 충돌·장애 시 Airflow 레벨 자동 재시도
 
-**시각자료**: 동시성 충돌 회피 다이어그램 — 09–16 KST = MERGE / 18 KST = Compaction 시간축 분리.
+**시각자료**: 동시성 타임라인 — 09–16 MERGE/OVERWRITE / 18:00 Compaction / 일요일 19:00 Expire 시간축 분리.
 
 **Speaker Note:**
 Iceberg 가 ACID 트랜잭션을 주지만 그게 자동으로 모든 충돌을 막아주는 건 아닙니다.
-충돌은 같은 파티션을 동시에 rewrite 할 때 발생합니다. 예를 들어 Compaction 이 hour=14 파티션을 rewrite 하는 동안 Silver MERGE 가 같은 파티션에 INSERT 하면 둘 중 하나가 commit 실패합니다.
-회피 패턴 첫째는 시간대 분리입니다. Compaction 은 18:00 평일에만 돕니다. 이 시각엔 장 시간 MERGE 가 끝났고, dim_symbol MERGE 는 다음날 04:00 입니다. 충돌 가능성 0 입니다.
-회피 패턴 둘째는 자동 재시도입니다. Silver MERGE 가 conflict 로 실패하면 최대 3 번 재시도합니다. 흔한 패턴이고 큰 비용이 들지 않습니다.
-이 두 패턴이면 Phase 1 규모에서 conflict 로 인한 운영 사고는 사실상 0 입니다.
+충돌은 두 writer 가 같은 테이블의 같은 파티션을 동시에 rewrite 할 때 발생합니다.
+첫 번째 회피 패턴은 시간대 분리입니다. MERGE 와 OVERWRITE 는 평일 09시에서 16시, Compaction 은 평일 18시, Expire 는 일요일 19시입니다. 매니지먼트 작업과 적재 작업이 시간상 절대 겹치지 않습니다.
+두 번째는 max_active_runs 를 1로 둔 겁니다. 한 DAG 의 이전 run 이 안 끝났는데 다음 스케줄이 와도 새 run 이 시작되지 않습니다. 연속된 Silver MERGE 가 중첩되는 상황 자체가 없습니다.
+세 번째는 Airflow DAG 레벨 retry 입니다. retries 2, retry_delay 1분. 일시적인 충돌이나 장애가 나도 1분 뒤 자동으로 재시도합니다.
+이 세 가지면 Phase 1 규모에서 conflict 로 인한 운영 사고는 사실상 0 입니다.
 
 ---
 
 ## 25. 매트릭 모니터링 — Prometheus + Grafana
 
-> KIS Producer / Kafka / Spark Streaming / Airflow → Prometheus scrape → Grafana 대시보드.
+> KIS Producer / Kafka JMX / Spark master·driver → Prometheus 15s scrape → Grafana.
 
-- KIS Producer 메트릭 : websocket 연결·heartbeat·발행 tick/sec
-- Kafka 메트릭 : consumer lag (kafka-exporter)
-- Spark Streaming : `prometheus_servlet` 으로 driver/executor 메트릭
-- Grafana 패널 : 장애 인지 시간 5 분 이내 목표 (운영 가시성 평가축)
+- Scrape 대상 4종 : kis-producer:9100 / kafka-jmx-exporter:7071 / spark-master / spark-driver
+- KIS Producer 메트릭 : `kis_ws_connected` / `kis_parse_errors_total` / `kis_token_refresh_failures_total` / `kis_messages_published_total`
+- Alert 6종 : WebSocket Down / Parse error spike·burst / Token refresh fail·trend / Broker rate mismatch
+- Grafana 대시보드 : `tickberg-1a` `tickberg-1b` — 장애 인지 5분 이내 목표
 
-**시각자료**: Grafana 대시보드 스크린샷 placeholder — 4 분할 (Producer / Kafka lag / Spark / Airflow). `<TODO: 실측 스샷>`
+**시각자료**: Grafana 대시보드 스크린샷 placeholder + Prometheus scrape 토폴로지. `<TODO: 실측 스샷>`
 
 **Speaker Note:**
-모니터링은 4 층입니다.
-KIS Producer 는 자체 Prometheus 메트릭을 노출합니다. websocket 연결 상태, heartbeat, 발행 tick/sec 이 1 초 단위로 보입니다.
-Kafka 는 kafka-exporter 컨테이너로 lag 을 노출합니다. consumer lag 이 늘어나면 Spark Streaming 이 처리 못 하고 있다는 신호입니다.
-Spark Streaming 은 prometheus_servlet 으로 driver 와 executor 메트릭을 노출합니다. micro-batch 처리 시간이 1 분을 넘으면 즉시 보입니다.
-Airflow 는 자체 statsd-exporter 로 DAG run/task 메트릭을 보냅니다.
-Grafana 에서 이 네 소스를 한 대시보드에 묶었습니다. 목표는 장애 인지 시간 5 분 이내입니다.
+모니터링은 Prometheus 와 Grafana 입니다. 15초 간격으로 scrape 합니다.
+Scrape 대상은 네 종류입니다. KIS Producer, Kafka JMX exporter, Spark master, Spark driver. 각자 Prometheus 메트릭 엔드포인트를 노출합니다.
+KIS Producer 가 가장 중요한 메트릭을 냅니다. WebSocket 연결 상태, parse error 수, 토큰 갱신 실패 수, 발행한 메시지 수입니다.
+Alert 는 6종입니다. WebSocket 이 5분간 끊기면 critical, parse error 가 튀면 warning, 토큰 갱신이 실패하면 critical 같은 식입니다.
+한 가지 강조하고 싶은 건 WebSocket Down alert 의 description 에 "장 마감 후엔 무시 가능" 이라고 명시했다는 점입니다. 장 시간과 장 마감 후를 alert 단에서 구분합니다.
+Kafka 쪽은 JMX exporter 로 broker in-rate 를 받아서, producer 가 publish 하는 rate 와 broker 가 받는 rate 의 차이가 분당 500을 넘으면 alert 합니다.
+Grafana 대시보드는 1a, 1b 두 개입니다. 목표는 장애 인지 시간 5분 이내입니다.
 
 ---
 ````
