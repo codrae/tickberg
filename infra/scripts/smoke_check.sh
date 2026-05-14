@@ -85,8 +85,11 @@ curl -sf http://localhost:3000/api/health >/dev/null \
 
 echo
 echo "[8] Prometheus targets all UP"
+# grep 이 "down" 을 못 찾으면 (= 모든 target UP, 정상) exit 1 → pipefail+set -e
+# 가 스크립트를 죽임. `|| true` 로 정상 상황에서도 ALL CLEAR 까지 진행.
 DOWN=$(curl -sf 'http://localhost:9090/api/v1/targets?state=active' 2>/dev/null \
-       | grep -o '"health":"down"' | wc -l)
+       | grep -o '"health":"down"' | wc -l || true)
+DOWN=${DOWN:-0}
 if [ "$DOWN" -eq 0 ]; then
   ok "all prometheus targets UP"
 else
