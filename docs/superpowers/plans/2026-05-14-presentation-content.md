@@ -1077,13 +1077,13 @@ MSK 는 Kafka 처리량 100MB/s 또는 RF=3 이 필요한 시점에 검토합니
 - "왜 Spark 인가? Glue Job 아니고?" → 비용·디버깅 단순성, 100x 시 EMR Serverless 비교
 - "왜 dbt 안 썼나?" → Phase 1 은 PySpark + SQL DDL 직접, dbt = Phase 2
 - "Iceberg v2 인 이유?" → 행 단위 delete 지원, Athena 도 v2 만 지원
-- "장 마감 후엔 무엇이 도나?" → Compaction / Expire / dim_symbol MERGE / DART 일배치
+- "장 마감 후엔 무엇이 도나?" → Compaction 평일 18:00 / Expire 일요일 19:00 (dim_symbol·DART 는 장 시작 전 배치)
 
-**시각자료**: 5 행 표 + 추가 4 종은 핸드오프 §11 참조.
+**시각자료**: 5 행 표 + 추가 3 종은 핸드오프 §11 참조.
 
 **Speaker Note:**
 Q&A 슬라이드는 예상 질문에 대한 즉답 카드입니다.
-다섯 가지를 슬라이드에 담았고, 추가 네 가지 (왜 Airflow 인가, 왜 Bronze 90일 후 Glacier IR 인가, 왜 ap-northeast-2 인가, 왜 단일 환경인가) 는 핸드오프 §11 에 정리되어 있습니다.
+다섯 가지를 슬라이드에 담았고, 추가 세 가지 (왜 Airflow 인가, 왜 Bronze 90일 후 Glacier IR 인가, 왜 ap-northeast-2 인가) 는 핸드오프 §11 에 정리되어 있습니다.
 모든 답변의 공통 원칙은 두 가지입니다.
 첫째, "현재 결정의 트리거 조건" 을 함께 답합니다. 그냥 "지금은 그래요" 가 아니고 "지금은 이래서 이걸 골랐고, 이런 신호가 보이면 바꿉니다" 라고 답합니다.
 둘째, Phase 1 과 Phase 2 의 경계를 명확히 그립니다. "그건 Phase 2 입니다" 라고 답해도 정당화되는 결정들입니다.
