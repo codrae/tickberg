@@ -330,3 +330,45 @@ NULL 차원. Silver DDL 에 trade_uid 가 필수 필드라 NULL 이면 INSERT �
 Phase 2 에서는 Great Expectations 나 Soda 같은 데이터 퀄리티 프레임워크를 검토할 예정입니다. Phase 1 은 헬스 쿼리 4 종 + 비즈니스 카운트 로그로 충분히 잡힌다고 봤습니다.
 
 ---
+
+## 17. Superset Dashboard ① — 비즈니스 KPI 탭
+
+> VWAP 차트 / 종목 거래대금 랭킹 / 분봉 OHLC — Gold 테이블 직접 조회.
+
+- VWAP 라인 차트 : 종목별 1분봉 VWAP 시계열 (오늘 09:00–현재)
+- 거래대금 랭킹 : Top N 종목 (분당)
+- 분봉 캔들 : OHLC 후보 종목 클릭 시 상세
+- 데이터 출처 : `tickberg.gold_symbol_vwap_1m` (Athena via Superset)
+
+**시각자료**: 대시보드 스크린샷 placeholder — VWAP 라인 + 랭킹 표 + 캔들 차트 3분할. `<TODO: 실측 스샷 추가>`
+
+**Speaker Note:**
+비즈니스 KPI 탭은 세 위젯으로 구성했습니다.
+VWAP 라인 차트는 종목별 1 분봉 VWAP 의 시계열입니다. 거래 흐름을 한 눈에 봅니다.
+거래대금 랭킹은 분당 거래대금 기준 Top N 종목입니다. 어느 종목이 지금 가장 활발한지 보입니다.
+분봉 OHLC 캔들은 특정 종목을 클릭하면 들어가는 상세 뷰입니다.
+데이터는 모두 Gold 테이블 한 곳에서 옵니다. 비즈니스 정의 변경 요청이 들어와도 Gold DDL 과 집계 SQL 두 군데만 보면 됩니다.
+실제 스크린샷은 발표 직전 캡처해서 슬라이드에 박아 넣을 예정입니다.
+
+---
+
+## 18. Superset Dashboard ② — 운영 메트릭 탭
+
+> Bronze lag / Silver dedup / Snapshot 누적 / Compaction 효과 — 운영자 5분 헬스체크.
+
+- Bronze freshness 패널 : 최근 lag_minutes (헬스 쿼리 #1)
+- Silver dedup 패널 : 시간별 dedup_ratio 추이 (헬스 쿼리 #2)
+- Snapshot 누적 패널 : Iceberg metadata 의 snapshot 개수 시계열
+- Compaction 효과 패널 : rewrite_data_files 전후 file count 비교
+
+**시각자료**: 운영 패널 스크린샷 placeholder — 4분할 grid. `<TODO: 실측 스샷 추가>`
+
+**Speaker Note:**
+운영 메트릭 탭은 평가 4축의 운영 가시성에 정면으로 답하는 슬라이드입니다.
+Bronze freshness 패널은 헬스 쿼리 1번을 그대로 위젯화한 것입니다. lag 가 임계를 넘으면 색이 바뀝니다.
+Silver dedup 패널은 시간별 dedup 비율 추이입니다. 0.95–1.0 밴드를 벗어나면 즉시 보입니다.
+Snapshot 누적 패널은 Iceberg metadata 의 snapshot 개수 시계열입니다. Expire 가 동작하지 않으면 단조 증가하는 게 보입니다. 이게 운영의 첫 번째 알람입니다.
+Compaction 효과 패널은 rewrite_data_files 실행 전후 file count 비교입니다. 18:00 KST 평일 직후 file count 가 떨어지는 게 보이면 정상입니다.
+평가자가 이 한 탭만 봐도 5분 안에 헬스 판단이 가능하도록 설계했습니다.
+
+---
