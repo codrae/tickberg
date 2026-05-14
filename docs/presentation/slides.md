@@ -65,3 +65,46 @@ KPI 는 Bronze lag 2분 이내, Silver dedup 비율 0.95 이상, Gold 분봉 결
 EDA 결과 수치는 발표 직전 Athena 조회로 채워 넣을 예정입니다. 일평균 tick 수와 분포, 그리고 결측 패턴 세 가지를 살펴보고 Silver dedup 룰을 설계했습니다.
 
 ---
+
+## 04. 아키텍처 한 장
+
+> 컴퓨트는 로컬 Mac Docker, 데이터·카탈로그·BI 는 모두 AWS — 단일 환경 원칙.
+
+- 로컬 : Kafka / Spark / Airflow / Prometheus / Grafana / Superset
+- AWS (ap-northeast-2) : S3 / Glue Catalog / Athena workgroup
+- 흐름 : KIS WebSocket → Kafka → Spark Streaming Bronze → Silver MERGE → Gold OVERWRITE → Athena → Superset
+- 원칙 : "로컬에선 됐는데 AWS 에선 안 돼" 디버깅 차단
+
+**시각자료**: 핸드오프 §3 의 데이터 흐름 다이어그램을 가로형 박스로 재구성. 좌 = 로컬, 우 = AWS, 점선 = 모니터링 평행선.
+
+**Speaker Note:**
+아키텍처는 한 가지 원칙으로 압축됩니다. 컴퓨트만 로컬 도커, 데이터·카탈로그·BI 는 전부 AWS 입니다.
+보통 부트캠프 프로젝트는 비용을 아끼려고 로컬에 MinIO 와 Hive Metastore 를 띄우는데, 저는 일부러 그걸 안 썼습니다.
+이유는 두 가지인데요. 첫째, 로컬에서 됐는데 AWS 에서 안 되는 디버깅을 한 번도 겪고 싶지 않았고, 둘째, 발표 시연을 라이브로 하려면 동일한 환경이어야 했습니다.
+좌측은 로컬 도커 스택입니다. Kafka, Spark, Airflow, 그리고 모니터링용 Prometheus/Grafana 와 Superset.
+우측은 AWS 입니다. 데이터는 S3, 카탈로그는 Glue, 쿼리는 Athena workgroup 으로 5GB 스캔 컷오프를 걸어 비용 가드레일을 만들었습니다.
+점선으로 표현한 모니터링 평행선은 운영 가시성 슬라이드에서 다시 다룹니다.
+
+---
+
+## 05. 핵심 결정 5가지
+
+> Bronze=Parquet / Silver·Gold=Iceberg / AWS-only / Athena DDL / dbt·자동매매 Phase 2.
+
+- ① Bronze = Parquet (Iceberg X) — streaming snapshot/manifest 갱신 오버헤드 차단
+- ② Silver/Gold = Iceberg — MERGE, OVERWRITE 원자성, Time-travel 세 가치
+- ③ AWS 단일 환경 — Glue Catalog 일원화, 로컬 MinIO/Hive 미사용
+- ④ DDL = Athena SQL — Spark cold start 회피, `.sql` 단일 진실원
+- ⑤ dbt·자동매매 = Phase 2 — Phase 1 은 Lakehouse + 운영 가시성에 집중
+
+**시각자료**: 5행 표 — 결정 / 근거 / Trade-off 명시.
+
+**Speaker Note:**
+이 다섯 가지가 발표의 척추입니다.
+첫째, Bronze 는 Parquet 입니다. Iceberg 가 아닙니다. 1분 trigger streaming 에서 snapshot 과 manifest 를 매번 갱신하면 그게 그대로 오버헤드입니다. 중복 제거나 UPSERT 는 어차피 Silver MERGE 한 번에 처리하면 충분합니다.
+둘째, Silver 와 Gold 는 Iceberg 입니다. 종목 마스터에 액면분할이 들어오면 MERGE INTO 가 필요하고, 대시보드 일관성을 위해 Gold OVERWRITE 원자성이 필요했습니다. 거기에 Time-travel 로 audit 도 가능합니다.
+셋째, 단일 AWS 환경. 앞 슬라이드에서 다뤘습니다.
+넷째, DDL 은 Athena 에서 직접 실행합니다. Spark CREATE 가 아닙니다. Cold start 가 없고, `.sql` 파일이 git 으로 추적되며, 단일 진실원이 됩니다. 이게 Iceberg 네이티브 키 일부를 거부한다는 trade-off 는 32장 회고에서 다시 말씀드립니다.
+다섯째, dbt 와 자동매매는 Phase 2 입니다. Phase 1 에서 욕심을 안 부린 결정입니다.
+
+---
