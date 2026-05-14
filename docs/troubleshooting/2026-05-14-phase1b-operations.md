@@ -54,6 +54,22 @@ Spark 에서 직접 조회 시 `trade_ts_kst` dtype = `timestamp_ntz`,
   pyspark `createDataFrame(naive_datetime)` 는 `session.timeZone` 이 아니라
   **driver process 의 system tz** 로 naive→instant 변환하므로
 
+### 데이터 backfill (오염 row 복구)
+수정 전 UTC session 으로 잘못 기록된 Silver row 는 코드 수정만으론 안 고쳐짐 —
+Iceberg DELETE + 재MERGE 로 복구:
+1. Athena `DELETE FROM silver_kis_tick_clean WHERE date(trade_ts_kst)='2026-05-14'
+   AND hour(trade_ts_kst) BETWEEN 0 AND 8` — 한국 장은 09:00 이전 거래 없음 →
+   hr 0-8 은 정의상 전부 UTC-shift 오염 row (269,885건)
+2. `bronze_to_silver_kis_tick.py --window-minutes 480` 재실행 — Bronze raw
+   (보존됨) 에서 올바른 KST 벽시계로 재MERGE (398,561건). trade_uid 가 KST
+   HHMMSS 라 신규 INSERT, 기존 정상 row 는 idempotent skip
+3. `silver_to_gold_vwap.py --hour` 로 5/14 hr 9-15 Gold 재집계
+- **Bronze 가 Parquet append-only raw 라 원본이 안전 → 언제든 재처리 가능**.
+  Silver 가 Iceberg 라 DELETE·재MERGE·time-travel 가능 — 메달리온+Iceberg 가
+  이 시나리오를 위한 설계.
+- 2026-05-14 분만 backfill (발표 demo 범위). 5/8~5/13 의 hr 0-8 오염
+  (~1,050,031건) 은 의도적 미처리 — 동일 절차로 복구 가능.
+
 ### 재발방지
 - 모든 신규 Spark job 의 `SparkSession.builder` 에 `session.timeZone=Asia/Seoul`
   명시 (streaming 과 일치)
