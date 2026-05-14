@@ -520,7 +520,7 @@ Iceberg 가 ACID 트랜잭션을 주지만 그게 자동으로 모든 충돌을 
 - Alert 6종 : WebSocket Down / Parse error spike·burst / Token refresh fail·trend / Broker rate mismatch
 - Grafana 대시보드 : `tickberg-1a` `tickberg-1b` — 장애 인지 5분 이내 목표
 
-**시각자료**: Grafana 대시보드 스크린샷 + Prometheus scrape 토폴로지. **캡처 방법**: http://localhost:3000 (admin/admin) → `tickberg-1a` / `tickberg-1b` 대시보드 캡처. 또는 5/14 영업시간 녹화 (`docs/superpowers/recordings/`) 의 Grafana 구간에서 추출.
+**시각자료**: Grafana 대시보드 스크린샷 (✅ 캡처 완료) — `tickberg-1a` / `tickberg-1b` 대시보드 + Prometheus scrape 토폴로지. Gamma 임포트 시 이미지 삽입.
 
 **Speaker Note:**
 모니터링은 Prometheus 와 Grafana 입니다. 15초 간격으로 scrape 합니다.
