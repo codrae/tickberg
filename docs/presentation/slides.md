@@ -553,21 +553,29 @@ Silver 의 COW write amplification 도 100x 에서 깨집니다. MERGE 시 parti
 
 ---
 
-## 27. 예상 문제 ② — OOM / S3 네트워크 장애
+## 27. 예상 문제 ② — OOM / S3 / Kafka 장애 (5/14 실제 발생 포함)
 
 > 어디서 데이터가 유실 가능한지 정확히 안다 — Kafka 이후는 replay, Kafka 이전은 알람.
 
 - Spark Bronze consumer OOM : Kafka offset checkpoint (S3) → 재기동 시 마지막 offset 부터 재개 (유실 0)
-- KIS Producer OOM : 라이브 WebSocket 구간이라 다운타임 tick 유실 → `restart=unless-stopped` + `kis_ws_connected` 알람
+- KIS Producer OOM/stuck : 라이브 WebSocket 구간이라 다운타임 tick 유실 → `restart=unless-stopped` + `kis_ws_connected` 알람. **단 stuck-loop (프로세스 안 죽음) 은 restart 정책 미발동** → self-healing guard 는 Phase 2
 - S3 PUT 일시 장애 : Spark Structured Streaming checkpoint 가 미완료 batch 다음 trigger 에 재시도
+- **5/14 실제 발생** : Kafka 컨테이너 재시작 → KRaft controller stale 등록으로 재시작 루프 + aiokafka producer stuck. 위 대응 체계로 5분 내 인지·복구, 6건 트러블슈팅 문서화
 - 가드레일 : Kafka retention 7일 = consumer replay 윈도우 / AWS Budgets 월 $20 알람
 
-**시각자료**: failure mode 표 — 장애 지점 / 영향 / 복구 / 안전망 (Kafka 전후 구분).
+```python
+# bronze_kis_tick_streaming.py — Kafka offset 이 S3 checkpoint 에 기록
+# → Spark consumer 가 죽어도 마지막 offset 부터 재개, 유실 0
+CHECKPOINT_PATH = f"s3a://{BUCKET}/checkpoints/bronze_kis_tick/"
+```
+
+**시각자료**: failure mode 표 — 장애 지점 / 영향 / 복구 / 안전망 (Kafka 전후 구분) + 5/14 실제 사례 칸.
 
 **Speaker Note:**
 운영 중 장애를 다룰 때 핵심은 어디서 데이터가 유실될 수 있는지를 정확히 아는 것입니다.
 Kafka 이후 구간은 안전합니다. Spark Bronze consumer 가 OOM 으로 죽어도 Kafka offset checkpoint 가 S3 에 있어서, 재기동하면 마지막 offset 부터 재개합니다. 유실이 0 입니다. 일부 메시지가 중복돼도 Silver MERGE 의 trade_uid 가 멱등이라 안전합니다.
-Kafka 이전 구간은 다릅니다. KIS Producer 가 OOM 으로 죽으면 KIS WebSocket 은 라이브 피드라 그 다운타임 동안의 tick 은 유실됩니다. 솔직히 인정하는 한계입니다. 대응은 두 가지인데, 컨테이너를 restart=unless-stopped 로 띄워 자동 재기동하고, kis_ws_connected 메트릭으로 5분 안에 알람을 받습니다.
+Kafka 이전 구간은 다릅니다. KIS Producer 가 죽으면 KIS WebSocket 은 라이브 피드라 그 다운타임 동안의 tick 은 유실됩니다. 솔직히 인정하는 한계입니다. 대응은 restart=unless-stopped 자동 재기동 + kis_ws_connected 메트릭 5분 알람입니다. 다만 한 가지 정직하게 짚으면 — 프로세스가 *죽지 않고* stuck-loop 만 도는 경우엔 restart 정책이 발동하지 않습니다. 이건 self-healing guard 로 Phase 2 에서 보강합니다.
+이 슬라이드가 "예상 문제" 인데, 사실 5/14 발표 준비 중에 정확히 이 시나리오를 실제로 겪었습니다. Kafka 컨테이너가 재시작됐고, KRaft controller 가 이전 broker 등록을 안 놔줘서 재시작 루프에 빠졌고, 그 사이 aiokafka producer 가 stuck 됐습니다. 중요한 건 — 위에 설계해 둔 대응 체계가 그대로 작동했다는 점입니다. ws_connected 알람으로 5분 안에 인지했고, 명시적 stop·start 와 producer 재시작으로 복구했습니다. 그리고 이 6건을 전부 트러블슈팅 문서로 남겼습니다. 장애 대응이 슬라이드 위의 가설이 아니라 실제로 한 번 돌아간 체계라는 게 핵심입니다.
 S3 PUT 이 일시적으로 장애가 나도 Spark Structured Streaming 의 checkpoint 가 미완료 batch 를 다음 trigger 에서 재시도합니다.
 Kafka retention 을 7일로 둔 이유가 여기 있습니다. consumer replay 윈도우입니다. 월요일 아침에 발견한 이슈를 금요일까지 거슬러 재처리할 수 있습니다.
 비용 가드레일도 별도입니다. AWS Budgets 로 월 20달러 알람이 걸려 있습니다.
@@ -659,14 +667,15 @@ MSK 는 Kafka 처리량 100MB/s 또는 RF=3 이 필요한 시점에 검토합니
 
 ## 32. 회고 — 결정의 비용
 
-> 모든 결정에 trade-off — DDL 전략 변경 / COW 수용 / 자동매매 OOS 가 솔직한 비용.
+> 모든 결정에 trade-off — DDL 전략 변경 / COW 수용 / 자동매매 OOS / Phase 1 속도의 비용.
 
 - DDL 전략 : Spark CREATE → Athena SQL 전환 (개발 중반) — 일부 Iceberg key 거부 수용
 - Iceberg COW : MOR 가 더 효율이지만 Athena DDL 한계로 COW 수용 → write amp 모니터링
 - 자동매매 OOS : 평가자 인상 약화 vs Phase 1 안정성 — 안정성 우선
 - 데이터 퀄리티 : 헬스 쿼리 vs DQ 프레임워크 — 시간 제약으로 헬스 쿼리
+- **Phase 1 속도의 비용** : 컨벤션 (session.timeZone 등) 을 처음부터 굳히지 않고 빠르게 만든 결과, 발표 준비 중 6건 운영 버그 발견 → 전부 진단·수정·문서화·backfill. 비용 = D-2 의 하루. 회수 = 트러블슈팅 문서 + 재발방지 컨벤션
 
-**시각자료**: 4 행 표 — 결정 / 비용 / 회수 시점.
+**시각자료**: 5 행 표 — 결정 / 비용 / 회수 시점.
 
 **Speaker Note:**
 모든 결정에는 비용이 있습니다. 솔직히 공유합니다.
@@ -674,6 +683,7 @@ MSK 는 Kafka 처리량 100MB/s 또는 RF=3 이 필요한 시점에 검토합니
 둘째, Iceberg COW 를 그대로 받았습니다. MOR 가 MERGE 효율이 더 좋지만 Athena DDL 한계로 COW 가 기본값이 됐고, write amplification 을 모니터링하면서 임계 시 Spark bootstrap 으로 전환하기로 했습니다.
 셋째, 자동매매를 빼서 평가자 인상이 약해질 위험이 있습니다. 그래도 Phase 1 안정성과 운영 가시성에 집중한 결정입니다.
 넷째, 데이터 퀄리티 프레임워크 미도입. 시간 제약 때문이고, Phase 1.5 의 첫 번째 항목입니다.
+다섯째, 가장 솔직한 비용입니다. Phase 1 을 빠르게 만들면서 컨벤션을 처음부터 굳히지 않았습니다. 대표적으로 Spark job 마다 session.timeZone 설정이 제각각이었는데, 발표 준비 중에 그게 Gold 가 0 rows 가 되는 timezone 버그로 터졌습니다. 이거 하나만이 아니라 — Bronze small-files 성능, DAG 자원 경합, Kafka 재시작 루프, aiokafka stuck, JMX 충돌까지 6건을 발표 D-2 에 발견했습니다. 비용은 분명합니다, 하루를 썼습니다. 하지만 그 하루에 6건 전부를 진단하고, 수정하고, backfill 하고, 트러블슈팅 문서로 남겼습니다. 평가 관점에서 보면 — 버그가 없는 게 아니라, 버그를 발견하고 체계적으로 처리하는 능력이 운영 성숙도입니다. 그게 이 항목을 회고에 정직하게 넣은 이유입니다.
 이 모든 비용을 알고 결정했고, 회수 시점도 정해두었습니다.
 
 ---
