@@ -57,3 +57,22 @@ groups:
         annotations:
           summary: "Parse errors > 100 in 10m sustained 5m"
           description: "KIS payload schema 변경 의심. ProducerParseErrorSpike (5m burst) 와 보완: 10m sustained."
+
+  - name: tickberg-1c
+    interval: 30s
+    rules:
+      - alert: KafkaControllerUnhealthy
+        expr: kafka_controller_activecontrollercount != 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "KRaft active controller count != 1"
+          description: "Controller quorum 손상. =0 이면 metadata 변경 불가, >1 이면 split-brain 상태. producer publish/consumer fetch 즉시 영향."
+
+      - alert: KafkaOfflinePartitions
+        expr: kafka_controller_offlinepartitionscount > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Kafka offline partition detected"
+          description: "1개 이상 파티션이 leaderless 상태. 해당 파티션의 producer publish 실패 + consumer 읽기 차단. kis.tick.raw 흐름 부분 손실 가능."

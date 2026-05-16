@@ -85,6 +85,15 @@ def main() -> None:
     spark = (
         SparkSession.builder.appName("bronze_kis_tick_streaming")
         .config("spark.sql.session.timeZone", "Asia/Seoul")
+        .config("spark.sql.streaming.metricsEnabled", "true")
+        .config("spark.metrics.appStatusSource.enabled", "true")
+        .config("spark.ui.prometheus.enabled", "true")
+        .config(
+            "spark.metrics.conf.*.sink.prometheusServlet.class",
+            "org.apache.spark.metrics.sink.PrometheusServlet",
+        )
+        .config("spark.metrics.conf.*.sink.prometheusServlet.path", "/metrics/prometheus/")
+        .config("spark.metrics.conf.driver.source.jvm.class", "org.apache.spark.metrics.source.JvmSource")
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("WARN")

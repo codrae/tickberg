@@ -113,6 +113,176 @@
       },
       "options": {"colorMode": "background", "graphMode": "none"},
       "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8}
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "KRaft Health",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 16},
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Active Controller (1=healthy)",
+      "description": "KRaft 모드에서 controller quorum 정상 시 1. !=1 이면 controller election 실패.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "kafka_controller_activecontrollercount", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1},
+              {"color": "red", "value": 2}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 17}
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Active Broker (1=healthy)",
+      "description": "현재 단일 broker 구성. 0 이면 broker down — KIS 흐름 전면 중단.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "kafka_controller_activebrokercount", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 17}
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Offline Partitions (0=healthy)",
+      "description": "0 유지 필요. >0 이면 producer publish 실패 또는 consumer 읽기 차단.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "kafka_controller_offlinepartitionscount", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 17}
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Metadata Apply Lag (ms)",
+      "description": "Controller 가 metadata record 를 적용한 시점 lag. KRaft 내부 health 지표.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "kafka_controller_lastappliedrecordlagms", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5000},
+              {"color": "red", "value": 30000}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 17}
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Controller 이벤트 추세 (errors / heartbeat timeouts)",
+      "description": "정상 시 두 라인 모두 0 평탄. >0 누적이면 controller pressure 의심.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "kafka_controller_metadataerrorcount", "legendFormat": "metadata errors", "refId": "A"},
+        {"expr": "kafka_controller_timedoutbrokerheartbeatcount", "legendFormat": "broker heartbeat timeouts", "refId": "B"}
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "custom": {"drawStyle": "line", "fillOpacity": 10}}
+      },
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 21}
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Spark Streaming (Bronze)",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27},
+      "panels": []
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Bronze batch latency (ms)",
+      "description": "Trigger=1min. latency 가 60000ms 미만이면 trigger interval 안에 처리 완료 = lag 없음. queryName=bronze_kis_tick_streaming.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "{__name__=~\"metrics_app_.*_driver_spark_streaming_bronze_kis_tick_streaming_latency_Value\"}",
+          "legendFormat": "batch latency",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {"drawStyle": "line", "fillOpacity": 10},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 30000},
+              {"color": "red", "value": 60000}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28}
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Spark input vs processing rate (rows/s)",
+      "description": "두 라인 거의 일치해야 정상. inputRate >> processingRate 이면 lag 누적 시작. 휴장 시 두 값 모두 0.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "{__name__=~\"metrics_app_.*_driver_spark_streaming_bronze_kis_tick_streaming_inputRate_total_Value\"}",
+          "legendFormat": "input rows/s",
+          "refId": "A"
+        },
+        {
+          "expr": "{__name__=~\"metrics_app_.*_driver_spark_streaming_bronze_kis_tick_streaming_processingRate_total_Value\"}",
+          "legendFormat": "processed rows/s",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "ops", "custom": {"drawStyle": "line", "fillOpacity": 10}}
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28}
     }
   ]
 }
