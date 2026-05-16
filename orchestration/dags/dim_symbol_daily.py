@@ -1,4 +1,7 @@
-"""dim_symbol daily MERGE (04:00 KST). Uses KIS REST → SCD1 MERGE."""
+"""dim_symbol weekday MERGE (04:00 KST MON-FRI). Uses KIS REST → SCD1 MERGE.
+
+장이 열리는 영업일 직전 새벽에만 갱신 — 주말엔 KIS 마스터 변화도 0.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -16,7 +19,7 @@ with DAG(
         "retry_delay": timedelta(minutes=2),
         "email_on_failure": True,
     },
-    schedule="0 4 * * *",
+    schedule="0 4 * * MON-FRI",
     start_date=datetime(2026, 5, 11, 4, 0),
     catchup=False,
     max_active_runs=1,

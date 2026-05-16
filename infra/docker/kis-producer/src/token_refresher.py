@@ -1,7 +1,8 @@
-"""Daily 03:30 KST token refresh.
+"""Weekday 03:30 KST token refresh.
 
-만료시간 추적 안 함 (spec §6.1.1, D15). 매일 03:30 강제 교체.
-04:30 cutoff 이후에도 실패 시 critical alert (caller 가 관리).
+만료시간 추적 안 함 (spec §6.1.1, D15). MON–FRI 03:30 강제 교체.
+주말(토·일)엔 KIS 정규장이 없어 토큰 사용 0건 → refresh skip
+(불필요한 KIS POST 차단). 04:30 cutoff 이후 실패 시 critical alert.
 """
 from __future__ import annotations
 
@@ -21,13 +22,15 @@ _CUTOFF_TIME = time(4, 30)
 
 
 def next_refresh_at(now: datetime) -> datetime:
+    """다음 평일 03:30 KST. weekday=0(Mon)..4(Fri), 5/6=Sat/Sun."""
     today_target = now.replace(
         hour=_REFRESH_TIME.hour, minute=_REFRESH_TIME.minute,
         second=0, microsecond=0,
     )
-    if now < today_target:
-        return today_target
-    return today_target + timedelta(days=1)
+    target = today_target if now < today_target else today_target + timedelta(days=1)
+    while target.weekday() >= 5:
+        target += timedelta(days=1)
+    return target
 
 
 async def run(
